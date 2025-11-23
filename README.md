@@ -1,142 +1,96 @@
-🚀 YOLOv8 混合分区 Web 系统
+# YOLOv8 混合分区 Web 系统
 
-基于 Flask + YOLOv8 的目标检测演示系统，支持三种计算分区策略，实现 端云协同（Hybrid Partitioning） 的性能对比。
+基于 Flask + YOLOv8 的目标检测演示，支持服务器 / 浏览器混合分区推理。三种策略可切换并对比耗时：
 
-🧩 功能与三种策略
-Strategy A — 纯服务器端推理与画框（Server Only）
+- **Strategy A**：纯服务器推理与画框
+- **Strategy B**：服务器推理，客户端画框
+- **Strategy C**：纯前端（浏览器 ONNX/Web 推理与画框）
 
-前端上传图片/视频
+## 目录结构
 
-服务器执行：推理 + 后处理（画框）
-
-返回带标注图像或视频
-
-Strategy B — 服务器推理 · 客户端画框（Server Inference + Client Postprocess）
-
-服务器执行 YOLOv8 推理
-
-服务器返回 bounding boxes 数组
-
-前端使用 Canvas 绘制检测框（仅图片）
-
-Strategy C — 浏览器端推理（Client Only · ONNX Runtime Web）
-
-纯前端执行：预处理 + ONNX 推理 + NMS + 画框
-
-无需上传图像
-
-仅支持图片（ONNX Web 推理）
-
-📁 项目结构
+```
 project/
-│── app.py
-│── models/
-│    └── yolov8n.pt
-│── templates/
-│    └── index.html
-│── static/
-│    ├── uploads/
-│    ├── result/
-│    ├── css/
-│    │    └── style.css
-│    └── js/
-│         ├── main.js
-│         └── yolov8n.onnx      # Strategy C 使用
-│── README.md
+├─ app.py
+├─ models/
+│   └─ yolov8n.pt
+├─ templates/
+│   └─ index.html
+├─ static/
+│   ├─ uploads/
+│   ├─ result/
+│   ├─ css/
+│   └─ js/
+│       └─ main.js
+└─ README.md
+```
 
-🔧 环境准备
-1. 创建 Conda 环境
-conda create -n yoloenv python=3.10 -y
-conda activate yoloenv
+## 环境与依赖
 
-2. 安装依赖
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-pip install flask ultralytics opencv-python onnxruntime onnx
+- Python 3.9+
+- 创建环境：
+  ```bash
+  conda create -n yoloenv python=3.10 -y
+  conda activate yoloenv
 
-📥 模型准备（）
-✔ 1. 下载 YOLOv8n.pt（用于 Strategy A/B）
+  ```
+- 安装依赖：
+  ```bash
+  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+  pip install flask ultralytics opencv-python onnxruntime onnx
+  ```
+  以下操作不需要在在bash中操作，仅供参考模型参数怎么来：
+- 下载模型权重：
+  ```bash
+  python
+  from ultralytics import YOLO
+  YOLO("yolov8n.pt")
+  exit()
+  ```
+  将生成的 `yolov8n.pt` 放到 `models/`。
+- 浏览器侧 ONNX（供 Strategy C 使用）：
+  ```bash
+  yolo export model=yolov8n.pt format=onnx opset=12
+  ```
+  把导出的 `yolov8n.onnx` 放到 `static/js/`，前端默认加载 `/static/js/yolov8n.onnx`。
 
-以下代码自动下载模型，无需运行整个系统。
+- 推荐下载方式（使用py程序）：
+  ```bash
+  python export_onnx.py
+  ```
 
-from ultralytics import YOLO
-YOLO("yolov8n.pt")
+## 运行
 
-
-然后将 yolov8n.pt 放入：
-
-models/yolov8n.pt
-
-✔ 2.导出 ONNX 模型（用于 Strategy C）
-
-使用 ultralytics 导出：
-
-yolo export model=yolov8n.pt format=onnx opset=12
-
-导出后将 yolov8n.onnx 放入：
-
-static/js/yolov8n.onnx
-
-或使用 Python（推荐）：
-
-python export_onnx.py
-
-
-▶️ 启动项目
+```bash
 python app.py
+```
 
+启动后访问：`http://localhost:5000/`
 
-打开浏览器访问：
+## 使用流程
 
-http://localhost:5000/
+1. 选择文件：支持 `jpg / jpeg / png / mp4`。
+2. 选择策略：
+   - **A**：服务器推理+画框，返回带框图片/视频。
+   - **B**：服务器仅返回 boxes，前端 canvas 画框（当前示例仅处理图片）。
+   - **C**：浏览器 ONNX 推理 + 前端 NMS/画框（当前示例仅处理图片）。
+3. 点击“开始检测”，查看状态、进度与性能表。
+4. 各策略有独立结果面板和下载链接，依次运行 A→B→C 也不会互相覆盖。
 
-💡 使用说明
+## 性能指标
 
-上传图片或视频（支持：.jpg / .jpeg / .png / .mp4）
+- 上传时间：A/B 显示，C 不适用。
+- 服务器推理时间：A/B 显示，C 不适用。
+- 客户端后处理时间：B/C 显示。
+- 整体耗时：A/B/C 均显示。
 
-选择策略：
+## 安全与限制
 
-A：服务器推理 + 服务器画框
+- 上传白名单：`jpg`、`jpeg`、`png`、`mp4`；使用 `secure_filename`。
+- 默认最大上传：200 MB（可在 `app.py` 调整）。
+- Strategy B/C 当前不处理视频后处理；如需支持，可参考 canvas 渲染逻辑扩展。
 
-B：服务器推理 → 客户端画框（仅图片）
+## 部署提示
 
-C：浏览器 ONNX 推理（仅图片）
-
-点击 开始检测
-
-查看：
-
-原图 / 结果图对比展示
-
-下载按钮
-
-各策略独立的性能统计表
-
-系统会自动展示上传时间、推理时间、后处理时间、整体耗时等关键性能指标。
-
-📊 性能指标
-指标	Strategy A	Strategy B	Strategy C
-上传时间	✔	✔	N/A
-服务器推理时间	✔	✔	N/A
-客户端后处理时间	N/A	✔	✔
-整体耗时	✔	✔	✔
-🔐 安全与限制
-
-白名单扩展名：jpg, jpeg, png, mp4
-
-使用 secure_filename 防止路径攻击
-
-最大上传大小：200 MB（可在 app.py 调整）
-
-Strategy B/C 暂不支持视频（代码已限制）
-
-🛠️ 开发提示
-
-上传文件保存至：static/uploads/
-
-检测结果保存至：static/result/
-
-若部署到生产环境：
-
-关闭 debug=True
-
-建议使用 Gunicorn + Nginx 或其他 WSGI
+- 生产环境请关闭 `debug=True`，并置于 WSGI / 反向代理之后。
+- 确保 `static/uploads/` 与 `static/result/` 可写。
+- 前端推理依赖 `onnxruntime-web`（CDN），可按需切换 WASM / WebGL 执行提供器。
