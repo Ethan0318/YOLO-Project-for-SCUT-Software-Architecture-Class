@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YOLOv8 Hybrid Partitioning</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.js"></script>
+  <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">混合分区 · YOLOv8</p>
+        <h1>Server / Client Hybrid Partitioning Demo</h1>
+        <p class="sub">选择不同策略，比较上传、推理与后处理耗时。</p>
+      </div>
+      <div class="badge">Strategies A · B · C</div>
+    </header>
+
+    <section class="card controls">
+      <div class="form-group">
+        <label for="fileInput">上传图片或视频 (jpg/jpeg/png/mp4)</label>
+        <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.mp4">
+        <p id="fileInfo" class="muted">未选择文件</p>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="strategySelect">策略</label>
+          <select id="strategySelect">
+            <option value="A">Strategy A · Server only</option>
+            <option value="B">Strategy B · Server inference + Client post</option>
+            <option value="C">Strategy C · Client-only (Web ONNX)</option>
+          </select>
+        </div>
+        <div class="actions">
+          <button id="startBtn" class="btn primary">开始检测</button>
+        </div>
+      </div>
+
+      <div class="status-bar">
+        <div class="spinner hidden" id="spinner"></div>
+        <div class="progress">
+          <div id="progressBar"></div>
+        </div>
+        <div id="statusText" class="status-text">等待开始…</div>
+      </div>
+    </section>
+
+    <section class="card media">
+      <div class="panel-header">
+        <h3>各策略独立结果</h3>
+        <p class="muted">每个策略最新结果都会保留，不会相互覆盖。</p>
+      </div>
+      <div class="strategy-grid">
+        <div class="strategy-card" id="panel-a">
+          <div class="strategy-title">Strategy A · Server only</div>
+          <div class="media-pair">
+            <div class="media-slot">
+              <p class="slot-label">原始</p>
+              <img id="original-a-image" class="media-view hidden" alt="A original">
+              <video id="original-a-video" class="media-view hidden" controls></video>
+            </div>
+            <div class="media-slot">
+              <p class="slot-label">检测结果</p>
+              <img id="detected-a-image" class="media-view hidden" alt="A detected">
+              <video id="detected-a-video" class="media-view hidden" controls></video>
+              <canvas id="detected-a-canvas" class="media-view hidden"></canvas>
+            </div>
+          </div>
+          <div class="links">
+            <a id="download-a-original" class="btn ghost" href="#" download>下载原始</a>
+            <a id="download-a-result" class="btn ghost" href="#" download>下载结果</a>
+          </div>
+        </div>
+
+        <div class="strategy-card" id="panel-b">
+          <div class="strategy-title">Strategy B · Server infer + Client draw</div>
+          <div class="media-pair">
+            <div class="media-slot">
+              <p class="slot-label">原始</p>
+              <img id="original-b-image" class="media-view hidden" alt="B original">
+              <video id="original-b-video" class="media-view hidden" controls></video>
+            </div>
+            <div class="media-slot">
+              <p class="slot-label">检测结果</p>
+              <img id="detected-b-image" class="media-view hidden" alt="B detected">
+              <video id="detected-b-video" class="media-view hidden" controls></video>
+              <canvas id="detected-b-canvas" class="media-view hidden"></canvas>
+            </div>
+          </div>
+          <div class="links">
+            <a id="download-b-original" class="btn ghost" href="#" download>下载原始</a>
+            <a id="download-b-result" class="btn ghost" href="#" download>下载结果</a>
+          </div>
+        </div>
+
+        <div class="strategy-card" id="panel-c">
+          <div class="strategy-title">Strategy C · Client-only (Web ONNX)</div>
+          <div class="media-pair">
+            <div class="media-slot">
+              <p class="slot-label">原始</p>
+              <img id="original-c-image" class="media-view hidden" alt="C original">
+              <video id="original-c-video" class="media-view hidden" controls></video>
+            </div>
+            <div class="media-slot">
+              <p class="slot-label">检测结果</p>
+              <img id="detected-c-image" class="media-view hidden" alt="C detected">
+              <video id="detected-c-video" class="media-view hidden" controls></video>
+              <canvas id="detected-c-canvas" class="media-view hidden"></canvas>
+            </div>
+          </div>
+          <div class="links">
+            <a id="download-c-original" class="btn ghost" href="#" download>下载原始</a>
+            <a id="download-c-result" class="btn ghost" href="#" download>下载结果</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card metrics">
+      <div class="panel-header">
+        <h3>性能统计</h3>
+        <p class="muted">单位：秒；“N/A” 表示该策略不涉及该阶段。</p>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>指标</th>
+            <th>Strategy A</th>
+            <th>Strategy B</th>
+            <th>Strategy C</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>上传时间</td>
+            <td id="metric-upload-a">—</td>
+            <td id="metric-upload-b">—</td>
+            <td id="metric-upload-c" class="muted">N/A</td>
+          </tr>
+          <tr>
+            <td>推理时间（服务器端）</td>
+            <td id="metric-infer-a">—</td>
+            <td id="metric-infer-b">—</td>
+            <td id="metric-infer-c" class="muted">N/A</td>
+          </tr>
+          <tr>
+            <td>后处理时间（客户端）</td>
+            <td class="muted">N/A</td>
+            <td id="metric-post-b">—</td>
+            <td id="metric-post-c">—</td>
+          </tr>
+          <tr>
+            <td>整体耗时</td>
+            <td id="metric-total-a">—</td>
+            <td id="metric-total-b">—</td>
+            <td id="metric-total-c">—</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="card note">
+      <h3>策略说明</h3>
+      <ul>
+        <li>Strategy A：前端上传，服务器完成推理与画框。</li>
+        <li>Strategy B：服务器只做推理，客户端基于返回的 boxes[] 画框。</li>
+        <li>Strategy C：全流程在浏览器执行，需提供 <code>static/js/yolov8n.onnx</code> 等 Web 模型文件。</li>
+      </ul>
+    </section>
+  </div>
+</body>
+</html>

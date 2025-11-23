@@ -1,0 +1,501 @@
+const fileInput = document.getElementById("fileInput");
+const fileInfo = document.getElementById("fileInfo");
+const strategySelect = document.getElementById("strategySelect");
+const startBtn = document.getElementById("startBtn");
+const spinner = document.getElementById("spinner");
+const progressBar = document.getElementById("progressBar");
+const statusText = document.getElementById("statusText");
+
+const strategyPanels = {
+  A: buildPanel("a"),
+  B: buildPanel("b"),
+  C: buildPanel("c"),
+};
+
+const metricIds = {
+  a: { upload: "metric-upload-a", infer: "metric-infer-a", post: null, total: "metric-total-a" },
+  b: { upload: "metric-upload-b", infer: "metric-infer-b", post: "metric-post-b", total: "metric-total-b" },
+  c: { upload: "metric-upload-c", infer: "metric-infer-c", post: "metric-post-c", total: "metric-total-c" },
+};
+
+const COCO_CLASSES = [
+  "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light",
+  "fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow",
+  "elephant","bear","zebra","giraffe","backpack","umbrella","handbag","tie","suitcase","frisbee",
+  "skis","snowboard","sports ball","kite","baseball bat","baseball glove","skateboard","surfboard",
+  "tennis racket","bottle","wine glass","cup","fork","knife","spoon","bowl","banana","apple",
+  "sandwich","orange","broccoli","carrot","hot dog","pizza","donut","cake","chair","couch",
+  "potted plant","bed","dining table","toilet","tv","laptop","mouse","remote","keyboard",
+  "cell phone","microwave","oven","toaster","sink","refrigerator","book","clock","vase",
+  "scissors","teddy bear","hair drier","toothbrush"
+];
+
+const IMG_SIZE = 640;
+const CONF_THRESHOLD_C = 0.35;
+const IOU_THRESHOLD_C = 0.5;
+const PRE_NMS_TOPK = 600;
+const MAX_DETS = 150;
+
+let progressInterval = null;
+let ortSession = null;
+
+function buildPanel(key) {
+  return {
+    originalImage: document.getElementById(`original-${key}-image`),
+    originalVideo: document.getElementById(`original-${key}-video`),
+    detectedImage: document.getElementById(`detected-${key}-image`),
+    detectedVideo: document.getElementById(`detected-${key}-video`),
+    canvas: document.getElementById(`detected-${key}-canvas`),
+    downloadOriginal: document.getElementById(`download-${key}-original`),
+    downloadResult: document.getElementById(`download-${key}-result`),
+  };
+}
+
+fileInput.addEventListener("change", () => {
+  if (!fileInput.files.length) {
+    fileInfo.textContent = "未选择文件";
+    return;
+  }
+  const file = fileInput.files[0];
+  fileInfo.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+});
+
+startBtn.addEventListener("click", () => {
+  if (!fileInput.files.length) {
+    alert("请先选择文件");
+    return;
+  }
+  const file = fileInput.files[0];
+  const strategy = strategySelect.value.toUpperCase();
+
+  resetStrategyMedia(strategy);
+  resetMetrics(strategy);
+  setStatus("开始处理...");
+  startLoading();
+
+  if (strategy === "B" && file.type.startsWith("video")) {
+    stopLoading();
+    setStatus("Strategy B 仅支持图片。");
+    alert("Strategy B 仅支持图片后处理，请选择图片。");
+    return;
+  }
+  if (strategy === "C" && file.type.startsWith("video")) {
+    stopLoading();
+    setStatus("Strategy C 当前仅支持图片。");
+    alert("Strategy C 当前仅支持图片。");
+    return;
+  }
+
+  showOriginalPreview(file, strategy);
+
+  if (strategy === "C") {
+    handleStrategyC(file).catch(handleError);
+  } else {
+    handleServerStrategy(file, strategy).catch(handleError);
+  }
+});
+
+function handleError(err) {
+  console.error(err);
+  setStatus(err.message || "发生错误");
+  alert(err.message || "请求失败");
+  stopLoading();
+}
+
+async function handleServerStrategy(file, strategy) {
+  const overallStart = performance.now();
+  const formData = new FormData();
+  formData.append("file", file);
+  formData.append("strategy", strategy);
+
+  const uploadStart = performance.now();
+  const resp = await fetch("/detect", { method: "POST", body: formData });
+  const uploadEnd = performance.now();
+  if (!resp.ok) {
+    let msg = "服务器错误";
+    try {
+      const data = await resp.json();
+      msg = data.error || msg;
+    } catch (_) {}
+    throw new Error(msg);
+  }
+  const data = await resp.json();
+  const clientUploadTime = (uploadEnd - uploadStart) / 1000;
+
+  if (strategy === "A") {
+    await handleStrategyAResult(data, file, overallStart, clientUploadTime);
+  } else {
+    await handleStrategyBResult(data, overallStart, clientUploadTime);
+  }
+  stopLoading();
+}
+
+async function handleStrategyAResult(data, file, overallStart, clientUploadTime) {
+  const panel = strategyPanels.A;
+  const isVideo = file.type.startsWith("video");
+  const originalUrl = `/${data.original}?t=${Date.now()}`;
+  panel.downloadOriginal.href = originalUrl;
+  showOriginalMedia(panel, originalUrl, isVideo);
+
+  if (isVideo) {
+    showDetectedVideo(panel, `/${data.detected}?t=${Date.now()}`);
+    panel.downloadResult.href = `/${data.detected}`;
+  } else {
+    showDetectedImage(panel, `/${data.detected}?t=${Date.now()}`);
+    panel.downloadResult.href = `/${data.detected}`;
+  }
+
+  const overall = (performance.now() - overallStart) / 1000;
+  setMetricCell("a", "upload", formatSeconds(data.upload_time ?? clientUploadTime));
+  setMetricCell("a", "infer", formatSeconds(data.infer_time));
+  setMetricCell("a", "total", formatSeconds(data.total_time ?? overall));
+  setStatus("Strategy A 完成");
+}
+
+async function handleStrategyBResult(data, overallStart, clientUploadTime) {
+  const panel = strategyPanels.B;
+  const originalUrl = `/${data.original}?t=${Date.now()}`;
+  panel.downloadOriginal.href = originalUrl;
+  showOriginalMedia(panel, originalUrl, false);
+
+  const { dataUrl, postTime } = await drawBoundingBoxes(originalUrl, data.boxes || [], panel.canvas);
+  const overall = (performance.now() - overallStart) / 1000;
+
+  showDetectedCanvas(panel);
+  panel.detectedImage.src = dataUrl;
+  panel.canvas.classList.remove("hidden");
+  panel.downloadResult.href = dataUrl;
+
+  setMetricCell("b", "upload", formatSeconds(data.upload_time ?? clientUploadTime));
+  setMetricCell("b", "infer", formatSeconds(data.infer_time));
+  setMetricCell("b", "post", formatSeconds(postTime));
+  setMetricCell("b", "total", formatSeconds(data.total_time ?? overall));
+  setStatus("Strategy B 完成");
+}
+
+async function handleStrategyC(file) {
+  const panel = strategyPanels.C;
+  const overallStart = performance.now();
+  const img = await loadImage(URL.createObjectURL(file));
+  const { tensor, ratio, padX, padY } = preprocessImage(img, IMG_SIZE);
+
+  if (!ortSession) {
+    setStatus("加载浏览器模型...");
+    ortSession = await ort.InferenceSession.create("/static/js/yolov8n.onnx", {
+      executionProviders: ["wasm", "webgl"],
+    });
+  }
+
+  setStatus("浏览器推理中...");
+  const inferStart = performance.now();
+  const outputs = await ortSession.run({ [ortSession.inputNames[0]]: tensor });
+  const inferTime = (performance.now() - inferStart) / 1000;
+
+  const outputTensor = outputs[ortSession.outputNames[0]];
+  const decoded = decodeDetections(outputTensor, ratio, padX, padY, img.naturalWidth, img.naturalHeight, CONF_THRESHOLD_C, PRE_NMS_TOPK);
+  const finalBoxes = nonMaxSuppression(decoded, IOU_THRESHOLD_C, MAX_DETS);
+
+  setStatus("客户端后处理...");
+  const { dataUrl, postTime } = await drawBoundingBoxes(img, finalBoxes, panel.canvas);
+  const overall = (performance.now() - overallStart) / 1000;
+
+  showOriginalMedia(panel, img.src, false);
+  showDetectedCanvas(panel);
+  panel.detectedImage.src = dataUrl;
+  panel.downloadOriginal.href = img.src;
+  panel.downloadResult.href = dataUrl;
+
+  setMetricCell("c", "upload", "N/A");
+  setMetricCell("c", "infer", "N/A");
+  setMetricCell("c", "post", formatSeconds(postTime));
+  setMetricCell("c", "total", formatSeconds(overall));
+  stopLoading();
+  setStatus("Strategy C 完成");
+  console.log("Client-side infer:", inferTime);
+}
+
+function showOriginalPreview(file, strategy) {
+  const url = URL.createObjectURL(file);
+  const panel = strategyPanels[strategy];
+  const isVideo = file.type.startsWith("video");
+  showOriginalMedia(panel, url, isVideo);
+  panel.downloadOriginal.href = url;
+}
+
+function showOriginalMedia(panel, url, isVideo) {
+  hideElements(panel.originalImage, panel.originalVideo);
+  if (isVideo) {
+    panel.originalVideo.classList.remove("hidden");
+    panel.originalVideo.src = url;
+  } else {
+    panel.originalImage.classList.remove("hidden");
+    panel.originalImage.src = url;
+  }
+}
+
+function showDetectedImage(panel, url) {
+  hideElements(panel.detectedVideo, panel.canvas);
+  panel.detectedImage.classList.remove("hidden");
+  panel.detectedImage.src = url;
+}
+
+function showDetectedVideo(panel, url) {
+  hideElements(panel.detectedImage, panel.canvas);
+  panel.detectedVideo.classList.remove("hidden");
+  panel.detectedVideo.src = url;
+}
+
+function showDetectedCanvas(panel) {
+  hideElements(panel.detectedImage, panel.detectedVideo);
+  if (panel.canvas) {
+    panel.canvas.classList.remove("hidden");
+  }
+}
+
+async function drawBoundingBoxes(imageSource, boxes, targetCanvas) {
+  const t0 = performance.now();
+  const canvas = targetCanvas;
+  const ctx = canvas.getContext("2d");
+  const img = await loadImage(imageSource);
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+  if (boxes.length) {
+    boxes.forEach((b) => {
+      const color = "#0ea5e9";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+
+      const label = `${COCO_CLASSES[b.cls] || "obj"} ${(b.conf * 100).toFixed(1)}%`;
+      ctx.fillStyle = color;
+      ctx.font = "14px Manrope, sans-serif";
+      const textWidth = ctx.measureText(label).width + 8;
+      const textHeight = 18;
+      ctx.fillRect(b.x1, Math.max(0, b.y1 - textHeight), textWidth, textHeight);
+      ctx.fillStyle = "#0b1220";
+      ctx.fillText(label, b.x1 + 4, Math.max(12, b.y1 - 4));
+    });
+  }
+
+  const dataUrl = canvas.toDataURL("image/png");
+  const postTime = (performance.now() - t0) / 1000;
+  return { dataUrl, postTime };
+}
+
+function preprocessImage(img, size) {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  canvas.width = size;
+  canvas.height = size;
+
+  const ratio = Math.min(size / img.naturalWidth, size / img.naturalHeight);
+  const newW = Math.round(img.naturalWidth * ratio);
+  const newH = Math.round(img.naturalHeight * ratio);
+  const padX = (size - newW) / 2;
+  const padY = (size - newH) / 2;
+
+  ctx.fillStyle = "rgb(114,114,114)";
+  ctx.fillRect(0, 0, size, size);
+  ctx.drawImage(img, padX, padY, newW, newH);
+
+  const imageData = ctx.getImageData(0, 0, size, size).data;
+  const floatData = new Float32Array(3 * size * size);
+  for (let i = 0; i < size * size; i++) {
+    floatData[i] = imageData[i * 4] / 255;
+    floatData[i + size * size] = imageData[i * 4 + 1] / 255;
+    floatData[i + 2 * size * size] = imageData[i * 4 + 2] / 255;
+  }
+  const tensor = new ort.Tensor("float32", floatData, [1, 3, size, size]);
+  return { tensor, ratio, padX, padY };
+}
+
+function decodeDetections(outputTensor, ratio, padX, padY, origW, origH, confThres = CONF_THRESHOLD_C, topK = PRE_NMS_TOPK) {
+  const data = outputTensor.data;
+  const dims = outputTensor.dims;
+  const stride = 5 + COCO_CLASSES.length;
+
+  let transposed = false;
+  let numAnchors = 0;
+  if (dims.length === 3 && dims[1] === stride) {
+    transposed = true;
+    numAnchors = dims[2];
+  } else if (dims.length === 3 && dims[2] === stride) {
+    numAnchors = dims[1];
+  } else {
+    numAnchors = data.length / stride;
+  }
+
+  const boxes = [];
+  for (let i = 0; i < numAnchors; i++) {
+    let x, y, w, h, obj;
+    if (transposed) {
+      x = data[i];
+      y = data[numAnchors + i];
+      w = data[2 * numAnchors + i];
+      h = data[3 * numAnchors + i];
+      obj = data[4 * numAnchors + i];
+    } else {
+      const offset = i * stride;
+      x = data[offset];
+      y = data[offset + 1];
+      w = data[offset + 2];
+      h = data[offset + 3];
+      obj = data[offset + 4];
+    }
+
+    let bestConf = 0;
+    let bestCls = -1;
+    for (let c = 0; c < COCO_CLASSES.length; c++) {
+      const clsScore = transposed ? data[(5 + c) * numAnchors + i] : data[i * stride + 5 + c];
+      const conf = clsScore * obj;
+      if (conf > bestConf) {
+        bestConf = conf;
+        bestCls = c;
+      }
+    }
+    if (bestConf < confThres) continue;
+
+    const [x1, y1, x2, y2] = xywhToXyxy(x, y, w, h);
+    const rect = deLetterBox(x1, y1, x2, y2, ratio, padX, padY, origW, origH);
+    boxes.push({ ...rect, cls: bestCls, conf: bestConf });
+  }
+  boxes.sort((a, b) => b.conf - a.conf);
+  return boxes.slice(0, topK);
+}
+
+function nonMaxSuppression(boxes, iouThreshold, maxDet = MAX_DETS) {
+  const byClass = {};
+  boxes.forEach((b) => {
+    if (!byClass[b.cls]) byClass[b.cls] = [];
+    byClass[b.cls].push(b);
+  });
+
+  const picked = [];
+  Object.values(byClass).forEach((list) => {
+    list.sort((a, b) => b.conf - a.conf);
+    while (list.length) {
+      const candidate = list.shift();
+      picked.push(candidate);
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (iou(candidate, list[i]) > iouThreshold) {
+          list.splice(i, 1);
+        }
+      }
+    }
+  });
+  picked.sort((a, b) => b.conf - a.conf);
+  return picked.slice(0, maxDet);
+}
+
+function deLetterBox(x1, y1, x2, y2, ratio, padX, padY, origW, origH) {
+  const left = clamp((x1 - padX) / ratio, 0, origW);
+  const top = clamp((y1 - padY) / ratio, 0, origH);
+  const right = clamp((x2 - padX) / ratio, 0, origW);
+  const bottom = clamp((y2 - padY) / ratio, 0, origH);
+  return { x1: left, y1: top, x2: right, y2: bottom };
+}
+
+function xywhToXyxy(x, y, w, h) {
+  const halfW = w / 2;
+  const halfH = h / 2;
+  return [x - halfW, y - halfH, x + halfW, y + halfH];
+}
+
+function iou(a, b) {
+  const interArea = Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1)) *
+    Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1));
+  const unionArea =
+    (a.x2 - a.x1) * (a.y2 - a.y1) + (b.x2 - b.x1) * (b.y2 - b.y1) - interArea;
+  return unionArea === 0 ? 0 : interArea / unionArea;
+}
+
+function loadImage(srcOrImg) {
+  return new Promise((resolve, reject) => {
+    if (srcOrImg instanceof HTMLImageElement) {
+      if (srcOrImg.complete) return resolve(srcOrImg);
+      srcOrImg.onload = () => resolve(srcOrImg);
+      srcOrImg.onerror = reject;
+      return;
+    }
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = srcOrImg;
+  });
+}
+
+function setMetricCell(strategy, key, value) {
+  const id = metricIds[strategy][key];
+  if (!id) return;
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+function resetMetrics(strategy) {
+  const key = strategy.toLowerCase();
+  const group = metricIds[key];
+  if (!group) return;
+  Object.values(group).forEach((id) => {
+    if (id) {
+      const cell = document.getElementById(id);
+      if (cell) cell.textContent = "—";
+    }
+  });
+}
+
+function resetStrategyMedia(strategy) {
+  const panel = strategyPanels[strategy];
+  if (!panel) return;
+  hideElements(panel.originalImage, panel.originalVideo, panel.detectedImage, panel.detectedVideo, panel.canvas);
+  if (panel.canvas) {
+    panel.canvas.getContext("2d").clearRect(0, 0, panel.canvas.width || 0, panel.canvas.height || 0);
+    panel.canvas.width = panel.canvas.height = 0;
+  }
+  panel.downloadOriginal.href = "#";
+  panel.downloadResult.href = "#";
+}
+
+function hideElements(...els) {
+  els.forEach((el) => {
+    if (el) el.classList.add("hidden");
+  });
+}
+
+function startLoading() {
+  spinner.classList.remove("hidden");
+  statusText.classList.remove("error");
+  progressBar.style.width = "8%";
+  if (progressInterval) clearInterval(progressInterval);
+  let value = 8;
+  progressInterval = setInterval(() => {
+    value = Math.min(96, value + Math.random() * 8);
+    progressBar.style.width = `${value}%`;
+  }, 300);
+}
+
+function stopLoading() {
+  spinner.classList.add("hidden");
+  if (progressInterval) {
+    clearInterval(progressInterval);
+    progressInterval = null;
+  }
+  progressBar.style.width = "100%";
+  setTimeout(() => (progressBar.style.width = "0%"), 500);
+}
+
+function setStatus(text) {
+  statusText.textContent = text;
+}
+
+function formatSeconds(sec) {
+  if (sec === "N/A") return "N/A";
+  return `${Number(sec).toFixed(3)} s`;
+}
+
+function clamp(val, min, max) {
+  return Math.max(min, Math.min(max, val));
+}
