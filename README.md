@@ -30,7 +30,7 @@ project/
  conda activate yoloenv
  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
  pip install flask ultralytics opencv-python onnxruntime onnx
-
+'''
 注意下面的下载是为了获取模型文件（仅作展示，不用运行）
 下载权重：
 bash
