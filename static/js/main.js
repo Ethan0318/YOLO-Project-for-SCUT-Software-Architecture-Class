@@ -13,9 +13,9 @@ const strategyPanels = {
 };
 
 const metricIds = {
-  a: { upload: "metric-upload-a", infer: "metric-infer-a", post: null, total: "metric-total-a" },
-  b: { upload: "metric-upload-b", infer: "metric-infer-b", post: "metric-post-b", total: "metric-total-b" },
-  c: { upload: "metric-upload-c", infer: "metric-infer-c", post: "metric-post-c", total: "metric-total-c" },
+  a: { upload: "metric-upload-a", download: "metric-download-a", total: "metric-total-a" },
+  b: { upload: "metric-upload-b", download: "metric-download-b", total: "metric-total-b" },
+  c: { upload: "metric-upload-c", download: "metric-download-c", total: "metric-total-c" },
 };
 
 const COCO_CLASSES = [
@@ -31,10 +31,11 @@ const COCO_CLASSES = [
 ];
 
 const IMG_SIZE = 640;
-const CONF_THRESHOLD_C = 0.35;
-const IOU_THRESHOLD_C = 0.5;
+const CONF_THRESHOLD_C = 0.25;
+const IOU_THRESHOLD_C = 0.45;
 const PRE_NMS_TOPK = 600;
-const MAX_DETS = 150;
+const MAX_DETS = 300;
+const CLASS_AGNOSTIC_NMS_C = false;
 
 let progressInterval = null;
 let ortSession = null;
@@ -42,9 +43,7 @@ let ortSession = null;
 function buildPanel(key) {
   return {
     originalImage: document.getElementById(`original-${key}-image`),
-    originalVideo: document.getElementById(`original-${key}-video`),
     detectedImage: document.getElementById(`detected-${key}-image`),
-    detectedVideo: document.getElementById(`detected-${key}-video`),
     canvas: document.getElementById(`detected-${key}-canvas`),
     downloadOriginal: document.getElementById(`download-${key}-original`),
     downloadResult: document.getElementById(`download-${key}-result`),
@@ -57,6 +56,12 @@ fileInput.addEventListener("change", () => {
     return;
   }
   const file = fileInput.files[0];
+  if (file.type.startsWith("video")) {
+    alert("不支持视频上传，请选择图片 (jpg/jpeg/png)");
+    fileInput.value = "";
+    fileInfo.textContent = "未选择文件";
+    return;
+  }
   fileInfo.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
 });
 
@@ -68,23 +73,18 @@ startBtn.addEventListener("click", () => {
   const file = fileInput.files[0];
   const strategy = strategySelect.value.toUpperCase();
 
+  if (file.type.startsWith("video")) {
+    setStatus("当前不支持视频上传，请选择图片。");
+    alert("当前不支持视频上传，请选择图片 (jpg/jpeg/png)。");
+    return;
+  }
+
   resetStrategyMedia(strategy);
   resetMetrics(strategy);
   setStatus("开始处理...");
   startLoading();
 
-  if (strategy === "B" && file.type.startsWith("video")) {
-    stopLoading();
-    setStatus("Strategy B 仅支持图片。");
-    alert("Strategy B 仅支持图片后处理，请选择图片。");
-    return;
-  }
-  if (strategy === "C" && file.type.startsWith("video")) {
-    stopLoading();
-    setStatus("Strategy C 当前仅支持图片。");
-    alert("Strategy C 当前仅支持图片。");
-    return;
-  }
+
 
   showOriginalPreview(file, strategy);
 
@@ -132,23 +132,21 @@ async function handleServerStrategy(file, strategy) {
 
 async function handleStrategyAResult(data, file, overallStart, clientUploadTime) {
   const panel = strategyPanels.A;
-  const isVideo = file.type.startsWith("video");
   const originalUrl = `/${data.original}?t=${Date.now()}`;
   panel.downloadOriginal.href = originalUrl;
-  showOriginalMedia(panel, originalUrl, isVideo);
+  showOriginalMedia(panel, originalUrl);
 
-  if (isVideo) {
-    showDetectedVideo(panel, `/${data.detected}?t=${Date.now()}`);
-    panel.downloadResult.href = `/${data.detected}`;
-  } else {
-    showDetectedImage(panel, `/${data.detected}?t=${Date.now()}`);
-    panel.downloadResult.href = `/${data.detected}`;
-  }
+  let downloadTime = 0;
+  const resultUrl = `/${data.detected}?t=${Date.now()}`;
+  hideElements(panel.canvas);
+  panel.detectedImage.classList.remove("hidden");
+  downloadTime = await waitImageLoad(panel.detectedImage, resultUrl);
+  panel.downloadResult.href = `/${data.detected}`;
 
   const overall = (performance.now() - overallStart) / 1000;
   setMetricCell("a", "upload", formatSeconds(data.upload_time ?? clientUploadTime));
-  setMetricCell("a", "infer", formatSeconds(data.infer_time));
-  setMetricCell("a", "total", formatSeconds(data.total_time ?? overall));
+  setMetricCell("a", "download", formatSeconds(downloadTime));
+  setMetricCell("a", "total", formatSeconds(overall));
   setStatus("Strategy A 完成");
 }
 
@@ -158,7 +156,7 @@ async function handleStrategyBResult(data, overallStart, clientUploadTime) {
   panel.downloadOriginal.href = originalUrl;
   showOriginalMedia(panel, originalUrl, false);
 
-  const { dataUrl, postTime } = await drawBoundingBoxes(originalUrl, data.boxes || [], panel.canvas);
+  const { dataUrl, downloadTime, clientTime } = await drawBoundingBoxes(originalUrl, data.boxes || [], panel.canvas, { color: "#0ea5e9" });
   const overall = (performance.now() - overallStart) / 1000;
 
   showDetectedCanvas(panel);
@@ -167,9 +165,8 @@ async function handleStrategyBResult(data, overallStart, clientUploadTime) {
   panel.downloadResult.href = dataUrl;
 
   setMetricCell("b", "upload", formatSeconds(data.upload_time ?? clientUploadTime));
-  setMetricCell("b", "infer", formatSeconds(data.infer_time));
-  setMetricCell("b", "post", formatSeconds(postTime));
-  setMetricCell("b", "total", formatSeconds(data.total_time ?? overall));
+  setMetricCell("b", "download", formatSeconds(downloadTime));
+  setMetricCell("b", "total", formatSeconds(overall));
   setStatus("Strategy B 完成");
 }
 
@@ -192,11 +189,13 @@ async function handleStrategyC(file) {
   const inferTime = (performance.now() - inferStart) / 1000;
 
   const outputTensor = outputs[ortSession.outputNames[0]];
+  const clientStart = performance.now();
   const decoded = decodeDetections(outputTensor, ratio, padX, padY, img.naturalWidth, img.naturalHeight, CONF_THRESHOLD_C, PRE_NMS_TOPK);
   const finalBoxes = nonMaxSuppression(decoded, IOU_THRESHOLD_C, MAX_DETS);
 
   setStatus("客户端后处理...");
-  const { dataUrl, postTime } = await drawBoundingBoxes(img, finalBoxes, panel.canvas);
+  const { dataUrl, clientTime } = await drawBoundingBoxes(img, finalBoxes, panel.canvas, { color: "#f97316" });
+  const clientProcTime = (performance.now() - clientStart) / 1000 + clientTime;
   const overall = (performance.now() - overallStart) / 1000;
 
   showOriginalMedia(panel, img.src, false);
@@ -206,8 +205,7 @@ async function handleStrategyC(file) {
   panel.downloadResult.href = dataUrl;
 
   setMetricCell("c", "upload", "N/A");
-  setMetricCell("c", "infer", "N/A");
-  setMetricCell("c", "post", formatSeconds(postTime));
+  setMetricCell("c", "download", "N/A");
   setMetricCell("c", "total", formatSeconds(overall));
   stopLoading();
   setStatus("Strategy C 完成");
@@ -217,72 +215,74 @@ async function handleStrategyC(file) {
 function showOriginalPreview(file, strategy) {
   const url = URL.createObjectURL(file);
   const panel = strategyPanels[strategy];
-  const isVideo = file.type.startsWith("video");
-  showOriginalMedia(panel, url, isVideo);
+  showOriginalMedia(panel, url);
   panel.downloadOriginal.href = url;
 }
 
-function showOriginalMedia(panel, url, isVideo) {
-  hideElements(panel.originalImage, panel.originalVideo);
-  if (isVideo) {
-    panel.originalVideo.classList.remove("hidden");
-    panel.originalVideo.src = url;
-  } else {
-    panel.originalImage.classList.remove("hidden");
-    panel.originalImage.src = url;
-  }
+function showOriginalMedia(panel, url) {
+  panel.originalImage.classList.remove("hidden");
+  panel.originalImage.src = url;
 }
 
 function showDetectedImage(panel, url) {
-  hideElements(panel.detectedVideo, panel.canvas);
+  hideElements(panel.canvas);
   panel.detectedImage.classList.remove("hidden");
   panel.detectedImage.src = url;
 }
 
-function showDetectedVideo(panel, url) {
-  hideElements(panel.detectedImage, panel.canvas);
-  panel.detectedVideo.classList.remove("hidden");
-  panel.detectedVideo.src = url;
-}
+
 
 function showDetectedCanvas(panel) {
-  hideElements(panel.detectedImage, panel.detectedVideo);
+  hideElements(panel.detectedImage);
   if (panel.canvas) {
     panel.canvas.classList.remove("hidden");
   }
 }
 
-async function drawBoundingBoxes(imageSource, boxes, targetCanvas) {
-  const t0 = performance.now();
+async function drawBoundingBoxes(imageSource, boxes, targetCanvas, options = {}) {
   const canvas = targetCanvas;
   const ctx = canvas.getContext("2d");
+
+  const imgStart = performance.now();
   const img = await loadImage(imageSource);
+  const downloadTime = (performance.now() - imgStart) / 1000;
+
   canvas.width = img.naturalWidth || img.width;
   canvas.height = img.naturalHeight || img.height;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const procStart = performance.now();
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
   if (boxes.length) {
     boxes.forEach((b) => {
-      const color = "#0ea5e9";
+      const color = options.color || "#0ea5e9";
+      const base = Math.min(canvas.width, canvas.height);
+      const lw = options.lineWidth ?? Math.max(6, Math.round(base / 120));
+      const fontSize = options.fontSize ?? Math.max(22, Math.round(lw * 7));
+      const padding = Math.max(6, Math.round(lw * 2));
+
       ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
+      ctx.lineWidth = lw;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
       ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
 
-      const label = `${COCO_CLASSES[b.cls] || "obj"} ${(b.conf * 100).toFixed(1)}%`;
+      const label = `${COCO_CLASSES[b.cls] || "obj"} ${b.conf.toFixed(2)}`;
+      ctx.font = `${fontSize}px Manrope, sans-serif`;
+      const textWidth = ctx.measureText(label).width + padding * 2;
+      const textHeight = fontSize + padding;
       ctx.fillStyle = color;
-      ctx.font = "14px Manrope, sans-serif";
-      const textWidth = ctx.measureText(label).width + 8;
-      const textHeight = 18;
-      ctx.fillRect(b.x1, Math.max(0, b.y1 - textHeight), textWidth, textHeight);
-      ctx.fillStyle = "#0b1220";
-      ctx.fillText(label, b.x1 + 4, Math.max(12, b.y1 - 4));
+      const rectY = Math.max(0, b.y1 - textHeight);
+      ctx.fillRect(b.x1, rectY, textWidth, textHeight);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(label, b.x1 + padding, rectY + fontSize);
     });
   }
 
+  const clientTime = (performance.now() - procStart) / 1000;
   const dataUrl = canvas.toDataURL("image/png");
-  const postTime = (performance.now() - t0) / 1000;
-  return { dataUrl, postTime };
+  return { dataUrl, downloadTime, clientTime };
 }
 
 function preprocessImage(img, size) {
@@ -315,42 +315,54 @@ function preprocessImage(img, size) {
 function decodeDetections(outputTensor, ratio, padX, padY, origW, origH, confThres = CONF_THRESHOLD_C, topK = PRE_NMS_TOPK) {
   const data = outputTensor.data;
   const dims = outputTensor.dims;
-  const stride = 5 + COCO_CLASSES.length;
+  const numClasses = COCO_CLASSES.length;
 
-  let transposed = false;
+  let channels = 0;
   let numAnchors = 0;
-  if (dims.length === 3 && dims[1] === stride) {
-    transposed = true;
-    numAnchors = dims[2];
-  } else if (dims.length === 3 && dims[2] === stride) {
-    numAnchors = dims[1];
+  let transposed = false;
+  if (dims.length === 3) {
+    if (dims[1] === numClasses + 4 || dims[1] === numClasses + 5) {
+      channels = dims[1];
+      numAnchors = dims[2];
+      transposed = true;
+    } else if (dims[2] === numClasses + 4 || dims[2] === numClasses + 5) {
+      channels = dims[2];
+      numAnchors = dims[1];
+    } else {
+      channels = (data.length % (numClasses + 5) === 0) ? (numClasses + 5) : (numClasses + 4);
+      numAnchors = data.length / channels;
+    }
   } else {
-    numAnchors = data.length / stride;
+    channels = (data.length % (numClasses + 5) === 0) ? (numClasses + 5) : (numClasses + 4);
+    numAnchors = data.length / channels;
   }
+  const hasObj = channels === numClasses + 5;
+  const clsOffset = hasObj ? 5 : 4;
 
   const boxes = [];
   for (let i = 0; i < numAnchors; i++) {
-    let x, y, w, h, obj;
+    let x, y, w, h, objProb = 1;
     if (transposed) {
       x = data[i];
       y = data[numAnchors + i];
       w = data[2 * numAnchors + i];
       h = data[3 * numAnchors + i];
-      obj = data[4 * numAnchors + i];
+      if (hasObj) objProb = toProb(data[4 * numAnchors + i]);
     } else {
-      const offset = i * stride;
+      const offset = i * channels;
       x = data[offset];
       y = data[offset + 1];
       w = data[offset + 2];
       h = data[offset + 3];
-      obj = data[offset + 4];
+      if (hasObj) objProb = toProb(data[offset + 4]);
     }
 
     let bestConf = 0;
     let bestCls = -1;
-    for (let c = 0; c < COCO_CLASSES.length; c++) {
-      const clsScore = transposed ? data[(5 + c) * numAnchors + i] : data[i * stride + 5 + c];
-      const conf = clsScore * obj;
+    for (let c = 0; c < numClasses; c++) {
+      const raw = transposed ? data[(clsOffset + c) * numAnchors + i] : data[i * channels + clsOffset + c];
+      const clsProb = toProb(raw);
+      const conf = hasObj ? clsProb * objProb : clsProb;
       if (conf > bestConf) {
         bestConf = conf;
         bestCls = c;
@@ -360,19 +372,32 @@ function decodeDetections(outputTensor, ratio, padX, padY, origW, origH, confThr
 
     const [x1, y1, x2, y2] = xywhToXyxy(x, y, w, h);
     const rect = deLetterBox(x1, y1, x2, y2, ratio, padX, padY, origW, origH);
-    boxes.push({ ...rect, cls: bestCls, conf: bestConf });
+    boxes.push({ ...rect, cls: bestCls, conf: Math.max(0, Math.min(1, bestConf)) });
   }
   boxes.sort((a, b) => b.conf - a.conf);
   return boxes.slice(0, topK);
 }
 
 function nonMaxSuppression(boxes, iouThreshold, maxDet = MAX_DETS) {
+  if (CLASS_AGNOSTIC_NMS_C) {
+    const list = boxes.slice().sort((a, b) => b.conf - a.conf);
+    const picked = [];
+    while (list.length && picked.length < maxDet) {
+      const candidate = list.shift();
+      picked.push(candidate);
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (iou(candidate, list[i]) > iouThreshold) {
+          list.splice(i, 1);
+        }
+      }
+    }
+    return picked;
+  }
   const byClass = {};
   boxes.forEach((b) => {
     if (!byClass[b.cls]) byClass[b.cls] = [];
     byClass[b.cls].push(b);
   });
-
   const picked = [];
   Object.values(byClass).forEach((list) => {
     list.sort((a, b) => b.conf - a.conf);
@@ -428,6 +453,17 @@ function loadImage(srcOrImg) {
   });
 }
 
+function waitImageLoad(imgEl, url) {
+  return new Promise((resolve) => {
+    const t0 = performance.now();
+    imgEl.onload = () => resolve((performance.now() - t0) / 1000);
+    imgEl.onerror = () => resolve((performance.now() - t0) / 1000);
+    imgEl.src = url;
+  });
+}
+
+
+
 function setMetricCell(strategy, key, value) {
   const id = metricIds[strategy][key];
   if (!id) return;
@@ -450,7 +486,7 @@ function resetMetrics(strategy) {
 function resetStrategyMedia(strategy) {
   const panel = strategyPanels[strategy];
   if (!panel) return;
-  hideElements(panel.originalImage, panel.originalVideo, panel.detectedImage, panel.detectedVideo, panel.canvas);
+  hideElements(panel.originalImage, panel.detectedImage, panel.canvas);
   if (panel.canvas) {
     panel.canvas.getContext("2d").clearRect(0, 0, panel.canvas.width || 0, panel.canvas.height || 0);
     panel.canvas.width = panel.canvas.height = 0;
@@ -498,4 +534,8 @@ function formatSeconds(sec) {
 
 function clamp(val, min, max) {
   return Math.max(min, Math.min(max, val));
+}
+function toProb(v) {
+  if (v >= 0 && v <= 1) return v;
+  return 1 / (1 + Math.exp(-v));
 }

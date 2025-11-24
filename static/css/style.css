@@ -37,6 +37,9 @@ body {
 .form-group { flex: 1; display: flex; flex-direction: column; gap: 8px; }
 label { font-weight: 600; }
 input[type="file"], select { padding: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; color: var(--text); }
+input[type="file"] { color: transparent; }
+input[type="file"]::file-selector-button { color: #000; }
+input[type="file"]::-webkit-file-upload-button { color: #000; }
 
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: none; border-radius: 12px; padding: 12px 16px; cursor: pointer; font-weight: 700; text-decoration: none; }
 .btn.primary { background: linear-gradient(120deg, var(--accent), #56ccf2); color: #0b1220; box-shadow: 0 10px 30px rgba(14,165,233,0.35); }

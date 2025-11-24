@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>YOLOv8 Hybrid Partitioning</title>
+  <title>YOLOv8 图片检测</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.js"></script>
   <script src="{{ url_for('static', filename='js/main.js') }}" defer></script>
@@ -12,17 +12,16 @@
   <div class="page">
     <header class="hero">
       <div>
-        <p class="eyebrow">混合分区 · YOLOv8</p>
-        <h1>Server / Client Hybrid Partitioning Demo</h1>
-        <p class="sub">选择不同策略，比较上传、推理与后处理耗时。</p>
+        <h1>基于YOLOv8的图片检测系统</h1>
+        <p class="sub">不同计算分区策略的性能比较</p>
       </div>
-      <div class="badge">Strategies A · B · C</div>
+
     </header>
 
     <section class="card controls">
       <div class="form-group">
-        <label for="fileInput">上传图片或视频 (jpg/jpeg/png/mp4)</label>
-        <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.mp4">
+        <label for="fileInput">选择图片 (jpg/jpeg/png)</label>
+        <input type="file" id="fileInput" accept=".jpg,.jpeg,.png">
         <p id="fileInfo" class="muted">未选择文件</p>
       </div>
 
@@ -52,7 +51,6 @@
     <section class="card media">
       <div class="panel-header">
         <h3>各策略独立结果</h3>
-        <p class="muted">每个策略最新结果都会保留，不会相互覆盖。</p>
       </div>
       <div class="strategy-grid">
         <div class="strategy-card" id="panel-a">
@@ -61,13 +59,10 @@
             <div class="media-slot">
               <p class="slot-label">原始</p>
               <img id="original-a-image" class="media-view hidden" alt="A original">
-              <video id="original-a-video" class="media-view hidden" controls></video>
             </div>
             <div class="media-slot">
               <p class="slot-label">检测结果</p>
               <img id="detected-a-image" class="media-view hidden" alt="A detected">
-              <video id="detected-a-video" class="media-view hidden" controls></video>
-              <canvas id="detected-a-canvas" class="media-view hidden"></canvas>
             </div>
           </div>
           <div class="links">
@@ -82,12 +77,12 @@
             <div class="media-slot">
               <p class="slot-label">原始</p>
               <img id="original-b-image" class="media-view hidden" alt="B original">
-              <video id="original-b-video" class="media-view hidden" controls></video>
+
             </div>
             <div class="media-slot">
               <p class="slot-label">检测结果</p>
               <img id="detected-b-image" class="media-view hidden" alt="B detected">
-              <video id="detected-b-video" class="media-view hidden" controls></video>
+
               <canvas id="detected-b-canvas" class="media-view hidden"></canvas>
             </div>
           </div>
@@ -103,12 +98,12 @@
             <div class="media-slot">
               <p class="slot-label">原始</p>
               <img id="original-c-image" class="media-view hidden" alt="C original">
-              <video id="original-c-video" class="media-view hidden" controls></video>
+
             </div>
             <div class="media-slot">
               <p class="slot-label">检测结果</p>
               <img id="detected-c-image" class="media-view hidden" alt="C detected">
-              <video id="detected-c-video" class="media-view hidden" controls></video>
+
               <canvas id="detected-c-canvas" class="media-view hidden"></canvas>
             </div>
           </div>
@@ -136,22 +131,16 @@
         </thead>
         <tbody>
           <tr>
-            <td>上传时间</td>
+            <td>请求准备与上传</td>
             <td id="metric-upload-a">—</td>
             <td id="metric-upload-b">—</td>
             <td id="metric-upload-c" class="muted">N/A</td>
           </tr>
           <tr>
-            <td>推理时间（服务器端）</td>
-            <td id="metric-infer-a">—</td>
-            <td id="metric-infer-b">—</td>
-            <td id="metric-infer-c" class="muted">N/A</td>
-          </tr>
-          <tr>
-            <td>后处理时间（客户端）</td>
-            <td class="muted">N/A</td>
-            <td id="metric-post-b">—</td>
-            <td id="metric-post-c">—</td>
+            <td>客户端下载与解析</td>
+            <td id="metric-download-a">—</td>
+            <td id="metric-download-b">—</td>
+            <td id="metric-download-c" class="muted">N/A</td>
           </tr>
           <tr>
             <td>整体耗时</td>

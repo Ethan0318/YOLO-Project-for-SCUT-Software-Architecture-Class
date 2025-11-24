@@ -7,7 +7,7 @@ from ultralytics import YOLO
 from werkzeug.utils import secure_filename
 
 BASE_DIR = Path(__file__).resolve().parent
-ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "mp4"}
+ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
 UPLOAD_FOLDER = BASE_DIR / "static" / "uploads"
 RESULT_FOLDER = BASE_DIR / "static" / "result"
 MODEL_PATH = BASE_DIR / "models" / "yolov8n.pt"
@@ -68,7 +68,7 @@ def detect():
     upload_start = time.time()
     uploaded.save(save_path)
     upload_time = time.time() - upload_start
-    ext = filename.rsplit(".", 1)[1].lower()
+
 
     if strategy == "C":
         return jsonify(
@@ -84,30 +84,6 @@ def detect():
         return jsonify({"error": str(exc)}), 500
 
     if strategy == "A":
-        if ext == "mp4":
-            infer_start = time.time()
-            results = mdl(
-                str(save_path),
-                save=True,
-                project=str(RESULT_FOLDER),
-                name="predict",
-                exist_ok=True,
-                verbose=False,
-            )
-            infer_time = time.time() - infer_start
-            saved_path = Path(results[0].save_dir) / Path(save_path).name
-            total_time = time.time() - total_start
-            return jsonify(
-                {
-                    "strategy": "A",
-                    "original": to_relative(save_path),
-                    "detected": to_relative(saved_path),
-                    "upload_time": round(upload_time, 3),
-                    "infer_time": round(infer_time, 3),
-                    "total_time": round(total_time, 3),
-                }
-            )
-
         infer_start = time.time()
         results = mdl(str(save_path), verbose=False)[0]
         infer_time = time.time() - infer_start
@@ -126,9 +102,6 @@ def detect():
                 "original": to_relative(save_path),
                 "detected": to_relative(detected_path),
                 "upload_time": round(upload_time, 3),
-                "infer_time": round(infer_time, 3),
-                "postprocess_time": round(post_time, 3),
-                "total_time": round(total_time, 3),
             }
         )
 
@@ -158,8 +131,6 @@ def detect():
                 "original": to_relative(save_path),
                 "boxes": boxes,
                 "upload_time": round(upload_time, 3),
-                "infer_time": round(infer_time, 3),
-                "total_time": round(total_time, 3),
             }
         )
 
