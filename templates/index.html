@@ -167,9 +167,9 @@
     <section class="card note">
       <h3>策略说明</h3>
       <ul>
-        <li>Strategy A：前端上传，服务器完成推理与画框。</li>
-        <li>Strategy B：服务器只做推理，客户端基于返回的 boxes[] 画框。</li>
-        <li>Strategy C：全流程在浏览器执行，需提供 <code>static/js/yolov8n.onnx</code> 等 Web 模型文件。</li>
+        <li>Strategy A：客户端上传，服务器完成推理与画框。</li>
+        <li>Strategy B：客户端预处理，服务器只做推理，客户端基于返回的 boxes[] 画框。</li>
+        <li>Strategy C：全流程在客户端执行，需提供 <code>static/js/yolov8n.onnx</code> 等 Web 模型文件。</li>
       </ul>
     </section>
   </div>
