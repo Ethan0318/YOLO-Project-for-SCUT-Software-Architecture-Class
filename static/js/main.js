@@ -13,8 +13,8 @@ const strategyPanels = {
 };
 
 const metricIds = {
-  a: { upload: "metric-upload-a", download: "metric-download-a", total: "metric-total-a" },
-  b: { upload: "metric-upload-b", download: "metric-download-b", total: "metric-total-b" },
+  a: { upload: "metric-upload-a", server_pre: "metric-serverpre-a", download: "metric-download-a", total: "metric-total-a" },
+  b: { client_pre: "metric-clientpre-b", upload: "metric-upload-b", server_pre: "metric-serverpre-b", download: "metric-download-b", total: "metric-total-b" },
   c: { upload: "metric-upload-c", download: "metric-download-c", total: "metric-total-c" },
 };
 
@@ -107,11 +107,14 @@ async function handleServerStrategy(file, strategy) {
 
   const formData = new FormData();
   let mapping = null;
+  let clientPreTime = 0;
 
   if (strategy === "B") {
+    const clientPreStart = performance.now();
     const img = await loadImage(URL.createObjectURL(file));
     const { blob, ratio, padX, padY } = await letterboxToBlob(img, IMG_SIZE);
     const smallFile = new File([blob], `resized_${Date.now()}.png`, { type: "image/png" });
+    clientPreTime = (performance.now() - clientPreStart) / 1000;
 
     formData.append("file", smallFile);
     formData.append("strategy", strategy);
@@ -144,7 +147,7 @@ async function handleServerStrategy(file, strategy) {
   if (strategy === "A") {
     await handleStrategyAResult(data, file, overallStart, clientUploadTime);
   } else {
-    await handleStrategyBResult(data, file, overallStart, clientUploadTime, mapping);
+    await handleStrategyBResult(data, file, overallStart, clientUploadTime, mapping, clientPreTime);
   }
   stopLoading();
 }
@@ -164,12 +167,13 @@ async function handleStrategyAResult(data, file, overallStart, clientUploadTime)
 
   const overall = (performance.now() - overallStart) / 1000;
   setMetricCell("a", "upload", formatSeconds(data.upload_time ?? clientUploadTime));
+  setMetricCell("a", "server_pre", formatSeconds(data.server_pre_time ?? "N/A"));
   setMetricCell("a", "download", formatSeconds(downloadTime));
   setMetricCell("a", "total", formatSeconds(overall));
   setStatus("Strategy A 完成");
 }
 
-async function handleStrategyBResult(data, file, overallStart, clientUploadTime, mapping) {
+async function handleStrategyBResult(data, file, overallStart, clientUploadTime, mapping, clientPreTime) {
   const panel = strategyPanels.B;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
   panel.downloadOriginal.href = localUrl;
@@ -190,7 +194,9 @@ async function handleStrategyBResult(data, file, overallStart, clientUploadTime,
   panel.canvas.classList.remove("hidden");
   panel.downloadResult.href = dataUrl;
 
+  setMetricCell("b", "client_pre", formatSeconds(clientPreTime));
   setMetricCell("b", "upload", formatSeconds(data.upload_time ?? clientUploadTime));
+  setMetricCell("b", "server_pre", formatSeconds(data.server_pre_time ?? "N/A"));
   setMetricCell("b", "download", formatSeconds(downloadTime));
   setMetricCell("b", "total", formatSeconds(overall));
   setStatus("Strategy B 完成");

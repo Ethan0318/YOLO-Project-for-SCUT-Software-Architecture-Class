@@ -69,6 +69,10 @@ def detect():
     uploaded.save(save_path)
     upload_time = time.time() - upload_start
 
+    read_start = time.time()
+    img = cv2.imread(str(save_path))
+    read_time = time.time() - read_start
+
 
     if strategy == "C":
         return jsonify(
@@ -85,8 +89,16 @@ def detect():
 
     if strategy == "A":
         infer_start = time.time()
-        results = mdl(str(save_path), verbose=False)[0]
+        results = mdl(img, verbose=False)[0]
         infer_time = time.time() - infer_start
+
+        preproc_ms = 0.0
+        try:
+            sp = getattr(results, "speed", None) or {}
+            preproc_ms = float(sp.get("preprocess", 0.0))
+        except Exception:
+            preproc_ms = 0.0
+        server_pre_time = round(upload_time + read_time + (preproc_ms / 1000.0), 3)
 
         plot_start = time.time()
         annotated = results.plot()
@@ -94,7 +106,6 @@ def detect():
         detected_path = RESULT_FOLDER / detected_name
         cv2.imwrite(str(detected_path), annotated)
         post_time = time.time() - plot_start
-        total_time = time.time() - total_start
 
         return jsonify(
             {
@@ -102,13 +113,22 @@ def detect():
                 "original": to_relative(save_path),
                 "detected": to_relative(detected_path),
                 "upload_time": round(upload_time, 3),
+                "server_pre_time": server_pre_time,
             }
         )
 
     if strategy == "B":
         infer_start = time.time()
-        results = mdl(str(save_path), verbose=False)[0]
+        results = mdl(img, verbose=False)[0]
         infer_time = time.time() - infer_start
+
+        preproc_ms = 0.0
+        try:
+            sp = getattr(results, "speed", None) or {}
+            preproc_ms = float(sp.get("preprocess", 0.0))
+        except Exception:
+            preproc_ms = 0.0
+        server_pre_time = round(upload_time + read_time + (preproc_ms / 1000.0), 3)
 
         boxes = []
         if results.boxes is not None:
@@ -124,13 +144,13 @@ def detect():
                         "conf": float(box.conf[0]),
                     }
                 )
-        total_time = time.time() - total_start
         return jsonify(
             {
                 "strategy": "B",
                 "original": to_relative(save_path),
                 "boxes": boxes,
                 "upload_time": round(upload_time, 3),
+                "server_pre_time": server_pre_time,
             }
         )
 
