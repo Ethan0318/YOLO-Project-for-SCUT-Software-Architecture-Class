@@ -104,9 +104,28 @@ function handleError(err) {
 
 async function handleServerStrategy(file, strategy) {
   const overallStart = performance.now();
+
   const formData = new FormData();
-  formData.append("file", file);
-  formData.append("strategy", strategy);
+  let mapping = null;
+
+  if (strategy === "B") {
+    const img = await loadImage(URL.createObjectURL(file));
+    const { blob, ratio, padX, padY } = await letterboxToBlob(img, IMG_SIZE);
+    const smallFile = new File([blob], `resized_${Date.now()}.png`, { type: "image/png" });
+
+    formData.append("file", smallFile);
+    formData.append("strategy", strategy);
+    formData.append("orig_w", String(img.naturalWidth || img.width));
+    formData.append("orig_h", String(img.naturalHeight || img.height));
+    formData.append("ratio", String(ratio));
+    formData.append("pad_x", String(padX));
+    formData.append("pad_y", String(padY));
+
+    mapping = { ratio, padX, padY, origW: img.naturalWidth || img.width, origH: img.naturalHeight || img.height };
+  } else {
+    formData.append("file", file);
+    formData.append("strategy", strategy);
+  }
 
   const uploadStart = performance.now();
   const resp = await fetch("/detect", { method: "POST", body: formData });
@@ -125,16 +144,16 @@ async function handleServerStrategy(file, strategy) {
   if (strategy === "A") {
     await handleStrategyAResult(data, file, overallStart, clientUploadTime);
   } else {
-    await handleStrategyBResult(data, overallStart, clientUploadTime);
+    await handleStrategyBResult(data, file, overallStart, clientUploadTime, mapping);
   }
   stopLoading();
 }
 
 async function handleStrategyAResult(data, file, overallStart, clientUploadTime) {
   const panel = strategyPanels.A;
-  const originalUrl = `/${data.original}?t=${Date.now()}`;
-  panel.downloadOriginal.href = originalUrl;
-  showOriginalMedia(panel, originalUrl);
+  const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
+  panel.downloadOriginal.href = localUrl;
+  showOriginalMedia(panel, localUrl);
 
   let downloadTime = 0;
   const resultUrl = `/${data.detected}?t=${Date.now()}`;
@@ -150,13 +169,20 @@ async function handleStrategyAResult(data, file, overallStart, clientUploadTime)
   setStatus("Strategy A 完成");
 }
 
-async function handleStrategyBResult(data, overallStart, clientUploadTime) {
+async function handleStrategyBResult(data, file, overallStart, clientUploadTime, mapping) {
   const panel = strategyPanels.B;
-  const originalUrl = `/${data.original}?t=${Date.now()}`;
-  panel.downloadOriginal.href = originalUrl;
-  showOriginalMedia(panel, originalUrl, false);
+  const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
+  panel.downloadOriginal.href = localUrl;
 
-  const { dataUrl, downloadTime, clientTime } = await drawBoundingBoxes(originalUrl, data.boxes || [], panel.canvas, { color: "#0ea5e9" });
+  const boxesSmall = data.boxes || [];
+  const boxes = Array.isArray(boxesSmall) && mapping
+    ? boxesSmall.map((b) => {
+        const rect = deLetterBox(b.x1, b.y1, b.x2, b.y2, mapping.ratio, mapping.padX, mapping.padY, mapping.origW, mapping.origH);
+        return { ...rect, cls: b.cls, conf: b.conf };
+      })
+    : boxesSmall;
+
+  const { dataUrl, downloadTime, clientTime } = await drawBoundingBoxes(panel.originalImage, boxes, panel.canvas, { color: "#0ea5e9" });
   const overall = (performance.now() - overallStart) / 1000;
 
   showDetectedCanvas(panel);
@@ -310,6 +336,28 @@ function preprocessImage(img, size) {
   }
   const tensor = new ort.Tensor("float32", floatData, [1, 3, size, size]);
   return { tensor, ratio, padX, padY };
+}
+
+async function letterboxToBlob(img, size) {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  canvas.width = size;
+  canvas.height = size;
+
+  const srcW = img.naturalWidth || img.width;
+  const srcH = img.naturalHeight || img.height;
+  const ratio = Math.min(size / srcW, size / srcH);
+  const newW = Math.round(srcW * ratio);
+  const newH = Math.round(srcH * ratio);
+  const padX = (size - newW) / 2;
+  const padY = (size - newH) / 2;
+
+  ctx.fillStyle = "rgb(114,114,114)";
+  ctx.fillRect(0, 0, size, size);
+  ctx.drawImage(img, padX, padY, newW, newH);
+
+  const blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png"));
+  return { blob, ratio, padX, padY };
 }
 
 function decodeDetections(outputTensor, ratio, padX, padY, origW, origH, confThres = CONF_THRESHOLD_C, topK = PRE_NMS_TOPK) {
