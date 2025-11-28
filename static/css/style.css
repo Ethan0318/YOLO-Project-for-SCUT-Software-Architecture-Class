@@ -79,7 +79,7 @@ th, td { padding: 10px; border-bottom: 1px solid var(--border); text-align: left
 th { color: var(--muted); }
 
 .muted { color: var(--muted); }
-.note ul { margin: 8px 0 0; padding-left: 18px; color: var(--muted); }
+.note ul { margin: 14px 0 0; padding-left: 18px; color: var(--muted); }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
