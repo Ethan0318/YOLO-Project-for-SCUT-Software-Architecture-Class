@@ -14,7 +14,7 @@ const strategyPanels = {
 
 const metricIds = {
   a: { upload: "metric-upload-a", server_pre: "metric-serverpre-a", download: "metric-download-a", total: "metric-total-a" },
-  b: { client_pre: "metric-clientpre-b", upload: "metric-upload-b", server_pre: "metric-serverpre-b", download: "metric-download-b", total: "metric-total-b" },
+  b: { client_pre: "metric-clientpre-b", upload: "metric-upload-b", download: "metric-download-b", total: "metric-total-b" },
   c: { upload: "metric-upload-c", download: "metric-download-c", total: "metric-total-c" },
 };
 
@@ -110,8 +110,8 @@ async function handleServerStrategy(file, strategy) {
   let clientPreTime = 0;
 
   if (strategy === "B") {
-    const clientPreStart = performance.now();
     const img = await loadImage(URL.createObjectURL(file));
+    const clientPreStart = performance.now();
     const { blob, ratio, padX, padY } = await letterboxToBlob(img, IMG_SIZE);
     const smallFile = new File([blob], `resized_${Date.now()}.png`, { type: "image/png" });
 
@@ -221,7 +221,6 @@ async function handleStrategyBResult(data, file, overallStart, responseDownTTLB,
 
   setMetricCell("b", "client_pre", formatSeconds(clientPreTime));
   setMetricCell("b", "upload", formatSeconds(data.upload_time ?? "N/A"));
-  setMetricCell("b", "server_pre", formatSeconds("N/A"));
   setMetricCell("b", "download", formatSeconds(responseDownTTLB));
   setMetricCell("b", "total", formatSeconds(overall));
   setStatus("Strategy B 完成");

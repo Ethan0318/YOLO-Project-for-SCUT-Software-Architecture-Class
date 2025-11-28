@@ -69,7 +69,9 @@ def detect():
     uploaded.save(save_path)
     upload_time = time.time() - upload_start
 
+    read_start = time.time()
     img = cv2.imread(str(save_path))
+    read_time = time.time() - read_start
 
 
     if strategy == "C":
@@ -96,7 +98,7 @@ def detect():
             preproc_ms = float(sp.get("preprocess", 0.0))
         except Exception:
             preproc_ms = 0.0
-        server_pre_time = round(preproc_ms / 1000.0, 3)
+        server_pre_time = round(read_time + (preproc_ms / 1000.0), 3)
 
         annotated = results.plot()
         detected_name = f"detected_{Path(filename).stem}.jpg"
