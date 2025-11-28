@@ -69,7 +69,10 @@ def detect():
     uploaded.save(save_path)
     save_io_time = time.time() - save_start
 
+    decode_start = time.time()
     img = cv2.imread(str(save_path))
+    decode_time = time.time() - decode_start
+    server_recv_pre = save_io_time + decode_time
 
 
     if strategy == "C":
@@ -106,6 +109,7 @@ def detect():
             "original": to_relative(save_path),
             "detected": to_relative(detected_path),
             "timings": {
+                "server_recv_pre": round(server_recv_pre, 3),
                 "server_infer": round(infer_time, 3),
                 "server_post": round(post_render_time + encode_time + (time.time() - resp_prep_start), 3),
             },
@@ -140,6 +144,7 @@ def detect():
             "original": to_relative(save_path),
             "boxes": boxes,
             "timings": {
+                "server_recv_pre": round(server_recv_pre, 3),
                 "server_infer": round(infer_time, 3),
                 "server_post": round(assemble_time + (time.time() - resp_prep_start), 3),
             },

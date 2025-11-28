@@ -13,9 +13,9 @@ const strategyPanels = {
 };
 
 const metricIds = {
-  a: { size: "metric-size-a", serverInfer: "metric-infer-a", serverPost: "metric-post-a", clientRender: "metric-client-render-a", total: "metric-total-a" },
-  b: { size: "metric-size-b", serverInfer: "metric-infer-b", serverPost: "metric-post-b", clientRender: "metric-client-render-b", total: "metric-total-b" },
-  c: { size: "metric-size-c", serverInfer: "metric-infer-c", serverPost: "metric-post-c", clientRender: "metric-client-render-c", total: "metric-total-c" },
+  a: { size: "metric-size-a", clientPreUpload: "metric-client-preupload-a", serverRecvPre: "metric-server-recvpre-a", serverInfer: "metric-infer-a", serverPost: "metric-post-a", clientRender: "metric-client-render-a", total: "metric-total-a" },
+  b: { size: "metric-size-b", clientPreUpload: "metric-client-preupload-b", serverRecvPre: "metric-server-recvpre-b", serverInfer: "metric-infer-b", serverPost: "metric-post-b", clientRender: "metric-client-render-b", total: "metric-total-b" },
+  c: { size: "metric-size-c", clientPreUpload: "metric-client-preupload-c", serverRecvPre: "metric-server-recvpre-c", serverInfer: "metric-infer-c", serverPost: "metric-post-c", clientRender: "metric-client-render-c", total: "metric-total-c" },
 };
 
 const COCO_CLASSES = [
@@ -178,15 +178,19 @@ async function handleServerStrategy(file, strategy) {
   }
 
   const uploadedBytes = (formData.get("file")?.size || (strategy === "A" ? file.size : 0));
+  const reqUpServerTotal = (headersTime - fetchStart) / 1000;
+  const srv = data.timings || {};
+  const uploadEstimate = Math.max(0, reqUpServerTotal - Number(srv.server_recv_pre || 0) - Number(srv.server_infer || 0) - Number(srv.server_post || 0));
+  const clientPreUpload = clientReqPrepare + uploadEstimate;
   if (strategy === "A") {
-    await handleStrategyAResult(data, file, overallStart, uploadedBytes);
+    await handleStrategyAResult(data, file, overallStart, uploadedBytes, clientPreUpload);
   } else {
-    await handleStrategyBResult(data, file, overallStart, mapping, uploadedBytes);
+    await handleStrategyBResult(data, file, overallStart, mapping, uploadedBytes, clientPreUpload);
   }
   stopLoading();
 }
 
-async function handleStrategyAResult(data, file, overallStart, uploadedBytes) {
+async function handleStrategyAResult(data, file, overallStart, uploadedBytes, clientPreUpload) {
   const panel = strategyPanels.A;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
   panel.downloadOriginal.href = localUrl;
@@ -201,6 +205,8 @@ async function handleStrategyAResult(data, file, overallStart, uploadedBytes) {
   const srv = data.timings || {};
   const overall = (performance.now() - overallStart) / 1000;
   setMetricCell("a", "size", formatMB(uploadedBytes));
+  setMetricCell("a", "clientPreUpload", formatSeconds(clientPreUpload));
+  setMetricCell("a", "serverRecvPre", formatSeconds(srv.server_recv_pre ?? "N/A"));
   setMetricCell("a", "serverInfer", formatSeconds(srv.server_infer ?? "N/A"));
   setMetricCell("a", "serverPost", formatSeconds(srv.server_post ?? "N/A"));
   setMetricCell("a", "clientRender", formatSeconds(clientRender));
@@ -208,7 +214,7 @@ async function handleStrategyAResult(data, file, overallStart, uploadedBytes) {
   setStatus("Strategy A 完成");
 }
 
-async function handleStrategyBResult(data, file, overallStart, mapping, uploadedBytes) {
+async function handleStrategyBResult(data, file, overallStart, mapping, uploadedBytes, clientPreUpload) {
   const panel = strategyPanels.B;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
   panel.downloadOriginal.href = localUrl;
@@ -232,6 +238,8 @@ async function handleStrategyBResult(data, file, overallStart, mapping, uploaded
   const srv = data.timings || {};
   const overall = (performance.now() - overallStart) / 1000;
   setMetricCell("b", "size", formatMB(uploadedBytes));
+  setMetricCell("b", "clientPreUpload", formatSeconds(clientPreUpload));
+  setMetricCell("b", "serverRecvPre", formatSeconds(srv.server_recv_pre ?? "N/A"));
   setMetricCell("b", "serverInfer", formatSeconds(srv.server_infer ?? "N/A"));
   setMetricCell("b", "serverPost", formatSeconds(srv.server_post ?? "N/A"));
   setMetricCell("b", "clientRender", formatSeconds(clientTime + layoutTime));
@@ -272,6 +280,8 @@ async function handleStrategyC(file) {
   panel.downloadResult.href = dataUrl;
 
   setMetricCell("c", "size", "N/A");
+  setMetricCell("c", "clientPreUpload", "N/A");
+  setMetricCell("c", "serverRecvPre", "N/A");
   setMetricCell("c", "serverInfer", "N/A");
   setMetricCell("c", "serverPost", "N/A");
   setMetricCell("c", "clientRender", "N/A");
