@@ -114,7 +114,6 @@ async function handleServerStrategy(file, strategy) {
     const img = await loadImage(URL.createObjectURL(file));
     const { blob, ratio, padX, padY } = await letterboxToBlob(img, IMG_SIZE);
     const smallFile = new File([blob], `resized_${Date.now()}.png`, { type: "image/png" });
-    clientPreTime = (performance.now() - clientPreStart) / 1000;
 
     formData.append("file", smallFile);
     formData.append("strategy", strategy);
@@ -123,6 +122,7 @@ async function handleServerStrategy(file, strategy) {
     formData.append("ratio", String(ratio));
     formData.append("pad_x", String(padX));
     formData.append("pad_y", String(padY));
+    clientPreTime = (performance.now() - clientPreStart) / 1000;
 
     mapping = { ratio, padX, padY, origW: img.naturalWidth || img.width, origH: img.naturalHeight || img.height };
   } else {
@@ -130,50 +130,75 @@ async function handleServerStrategy(file, strategy) {
     formData.append("strategy", strategy);
   }
 
-  const uploadStart = performance.now();
   const resp = await fetch("/detect", { method: "POST", body: formData });
-  const uploadEnd = performance.now();
+
+  let rawText = "";
+  let responseDownTTLB = 0;
+  if (resp.body && resp.body.getReader) {
+    const reader = resp.body.getReader();
+    const chunks = [];
+    const decoder = new TextDecoder("utf-8");
+    const downStart = performance.now();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (value) chunks.push(value);
+      if (done) break;
+    }
+    responseDownTTLB = (performance.now() - downStart) / 1000;
+    const totalLen = chunks.reduce((n, c) => n + c.length, 0);
+    const merged = new Uint8Array(totalLen);
+    let offset = 0;
+    for (const c of chunks) { merged.set(c, offset); offset += c.length; }
+    rawText = decoder.decode(merged);
+  } else {
+    const downStart = performance.now();
+    rawText = await resp.text();
+    responseDownTTLB = (performance.now() - downStart) / 1000;
+  }
+
+  let data;
+  try {
+    data = JSON.parse(rawText);
+  } catch (_) {
+    data = {};
+  }
   if (!resp.ok) {
     let msg = "服务器错误";
     try {
-      const data = await resp.json();
-      msg = data.error || msg;
+      msg = (data && data.error) || msg;
     } catch (_) {}
     throw new Error(msg);
   }
-  const data = await resp.json();
-  const clientUploadTime = (uploadEnd - uploadStart) / 1000;
 
   if (strategy === "A") {
-    await handleStrategyAResult(data, file, overallStart, clientUploadTime);
+    await handleStrategyAResult(data, file, overallStart, responseDownTTLB);
   } else {
-    await handleStrategyBResult(data, file, overallStart, clientUploadTime, mapping, clientPreTime);
+    await handleStrategyBResult(data, file, overallStart, responseDownTTLB, mapping, clientPreTime);
   }
   stopLoading();
 }
 
-async function handleStrategyAResult(data, file, overallStart, clientUploadTime) {
+async function handleStrategyAResult(data, file, overallStart, responseDownTTLB) {
   const panel = strategyPanels.A;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
   panel.downloadOriginal.href = localUrl;
   showOriginalMedia(panel, localUrl);
 
-  let downloadTime = 0;
   const resultUrl = `/${data.detected}?t=${Date.now()}`;
   hideElements(panel.canvas);
   panel.detectedImage.classList.remove("hidden");
-  downloadTime = await waitImageLoad(panel.detectedImage, resultUrl);
+  await waitImageLoad(panel.detectedImage, resultUrl);
   panel.downloadResult.href = `/${data.detected}`;
 
   const overall = (performance.now() - overallStart) / 1000;
-  setMetricCell("a", "upload", formatSeconds(data.upload_time ?? clientUploadTime));
+  setMetricCell("a", "upload", formatSeconds(data.upload_time ?? "N/A"));
   setMetricCell("a", "server_pre", formatSeconds(data.server_pre_time ?? "N/A"));
-  setMetricCell("a", "download", formatSeconds(downloadTime));
+  setMetricCell("a", "download", formatSeconds(responseDownTTLB));
   setMetricCell("a", "total", formatSeconds(overall));
   setStatus("Strategy A 完成");
 }
 
-async function handleStrategyBResult(data, file, overallStart, clientUploadTime, mapping, clientPreTime) {
+async function handleStrategyBResult(data, file, overallStart, responseDownTTLB, mapping, clientPreTime) {
   const panel = strategyPanels.B;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
   panel.downloadOriginal.href = localUrl;
@@ -186,7 +211,7 @@ async function handleStrategyBResult(data, file, overallStart, clientUploadTime,
       })
     : boxesSmall;
 
-  const { dataUrl, downloadTime, clientTime } = await drawBoundingBoxes(panel.originalImage, boxes, panel.canvas, { color: "#0ea5e9" });
+  const { dataUrl, clientTime } = await drawBoundingBoxes(panel.originalImage, boxes, panel.canvas, { color: "#0ea5e9" });
   const overall = (performance.now() - overallStart) / 1000;
 
   showDetectedCanvas(panel);
@@ -195,9 +220,9 @@ async function handleStrategyBResult(data, file, overallStart, clientUploadTime,
   panel.downloadResult.href = dataUrl;
 
   setMetricCell("b", "client_pre", formatSeconds(clientPreTime));
-  setMetricCell("b", "upload", formatSeconds(data.upload_time ?? clientUploadTime));
-  setMetricCell("b", "server_pre", formatSeconds(data.server_pre_time ?? "N/A"));
-  setMetricCell("b", "download", formatSeconds(downloadTime));
+  setMetricCell("b", "upload", formatSeconds(data.upload_time ?? "N/A"));
+  setMetricCell("b", "server_pre", formatSeconds("N/A"));
+  setMetricCell("b", "download", formatSeconds(responseDownTTLB));
   setMetricCell("b", "total", formatSeconds(overall));
   setStatus("Strategy B 完成");
 }
@@ -275,9 +300,7 @@ async function drawBoundingBoxes(imageSource, boxes, targetCanvas, options = {})
   const canvas = targetCanvas;
   const ctx = canvas.getContext("2d");
 
-  const imgStart = performance.now();
   const img = await loadImage(imageSource);
-  const downloadTime = (performance.now() - imgStart) / 1000;
 
   canvas.width = img.naturalWidth || img.width;
   canvas.height = img.naturalHeight || img.height;
@@ -314,7 +337,7 @@ async function drawBoundingBoxes(imageSource, boxes, targetCanvas, options = {})
 
   const clientTime = (performance.now() - procStart) / 1000;
   const dataUrl = canvas.toDataURL("image/png");
-  return { dataUrl, downloadTime, clientTime };
+  return { dataUrl, clientTime };
 }
 
 function preprocessImage(img, size) {
