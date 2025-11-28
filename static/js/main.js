@@ -112,20 +112,29 @@ async function handleServerStrategy(file, strategy) {
 
   if (strategy === "B") {
     const img = await loadImage(URL.createObjectURL(file));
-    const preStart = performance.now();
-    const { blob, ratio, padX, padY } = await letterboxToBlob(img, IMG_SIZE);
-    clientPreTime = (performance.now() - preStart) / 1000;
-    const smallFile = new File([blob], `resized_${Date.now()}.png`, { type: "image/png" });
+    const srcW = img.naturalWidth || img.width;
+    const srcH = img.naturalHeight || img.height;
+    const needDownscale = Math.max(srcW, srcH) > IMG_SIZE;
 
-    formData.append("file", smallFile);
-    formData.append("strategy", strategy);
-    formData.append("orig_w", String(img.naturalWidth || img.width));
-    formData.append("orig_h", String(img.naturalHeight || img.height));
-    formData.append("ratio", String(ratio));
-    formData.append("pad_x", String(padX));
-    formData.append("pad_y", String(padY));
+    if (needDownscale) {
+      const preStart = performance.now();
+      const { blob, ratio, padX, padY } = await letterboxToBlob(img, IMG_SIZE, "image/jpeg", 0.8);
+      clientPreTime = (performance.now() - preStart) / 1000;
+      const smallFile = new File([blob], `resized_${Date.now()}.jpg`, { type: "image/jpeg" });
 
-    mapping = { ratio, padX, padY, origW: img.naturalWidth || img.width, origH: img.naturalHeight || img.height };
+      formData.append("file", smallFile);
+      formData.append("strategy", strategy);
+      formData.append("orig_w", String(srcW));
+      formData.append("orig_h", String(srcH));
+      formData.append("ratio", String(ratio));
+      formData.append("pad_x", String(padX));
+      formData.append("pad_y", String(padY));
+
+      mapping = { ratio, padX, padY, origW: srcW, origH: srcH };
+    } else {
+      formData.append("file", file);
+      formData.append("strategy", strategy);
+    }
   } else {
     formData.append("file", file);
     formData.append("strategy", strategy);
@@ -330,7 +339,7 @@ async function drawBoundingBoxes(imageSource, boxes, targetCanvas, options = {})
   }
 
   const clientTime = (performance.now() - procStart) / 1000;
-  const dataUrl = canvas.toDataURL("image/png");
+  const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
   return { dataUrl, clientTime };
 }
 
@@ -361,7 +370,7 @@ function preprocessImage(img, size) {
   return { tensor, ratio, padX, padY };
 }
 
-async function letterboxToBlob(img, size) {
+async function letterboxToBlob(img, size, mime = "image/jpeg", quality = 0.8) {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   canvas.width = size;
@@ -379,7 +388,7 @@ async function letterboxToBlob(img, size) {
   ctx.fillRect(0, 0, size, size);
   ctx.drawImage(img, padX, padY, newW, newH);
 
-  const blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png"));
+  const blob = await new Promise((resolve) => canvas.toBlob((b) => resolve(b), mime, quality));
   return { blob, ratio, padX, padY };
 }
 

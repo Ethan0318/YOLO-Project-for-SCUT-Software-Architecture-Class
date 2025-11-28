@@ -8,7 +8,8 @@
 
 ## ver-4.0 更新说明
 
-- 模型改用yolov8s
+- 模型改用yolov8s。
+- 策略 B 仅在原图最大边大于 IMG_SIZE 时才做 client-side letterbox；否则直接上传原图，彻底避免小图上采样导致的体积膨胀。
 
 ## ver-3.0 更新说明
 
