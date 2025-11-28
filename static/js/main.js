@@ -133,64 +133,39 @@ async function handleServerStrategy(file, strategy) {
   const reqPrepareEnd = performance.now();
   const clientReqPrepare = (reqPrepareEnd - reqPrepareStart) / 1000;
 
-  const fetchStart = performance.now();
-  const resp = await fetch("/detect", { method: "POST", body: formData });
-  const headersTime = performance.now();
+  const reqStart = performance.now();
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", "/detect", true);
+  let uploadEnd = reqStart;
+  let headersRecv = reqStart;
+  xhr.upload.addEventListener("loadend", () => { uploadEnd = performance.now(); });
+  xhr.onreadystatechange = () => { if (xhr.readyState === 2) headersRecv = performance.now(); };
+  const rawText = await new Promise((resolve, reject) => {
+    xhr.onload = () => resolve(xhr.responseText || "{}");
+    xhr.onerror = () => reject(new Error("网络错误"));
+    xhr.send(formData);
+  });
+  const respDone = performance.now();
 
-  let rawText = "";
-  let firstChunkDelay = 0;
-  let downParseTime = 0;
-  if (resp.body && resp.body.getReader) {
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-    const chunks = [];
-    let gotFirst = false;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (!gotFirst && value) { firstChunkDelay = (performance.now() - headersTime) / 1000; gotFirst = true; }
-      if (value) chunks.push(value);
-      if (done) break;
-    }
-    downParseTime = (performance.now() - headersTime) / 1000;
-    const totalLen = chunks.reduce((n, c) => n + c.length, 0);
-    const merged = new Uint8Array(totalLen);
-    let offset = 0;
-    for (const c of chunks) { merged.set(c, offset); offset += c.length; }
-    rawText = decoder.decode(merged);
-  } else {
-    rawText = await resp.text();
-    downParseTime = (performance.now() - headersTime) / 1000;
-    firstChunkDelay = 0;
-  }
-
+  const parseStart = performance.now();
   let data;
-  try {
-    data = JSON.parse(rawText);
-  } catch (_) {
-    data = {};
-  }
-  if (!resp.ok) {
-    let msg = "服务器错误";
-    try {
-      msg = (data && data.error) || msg;
-    } catch (_) {}
-    throw new Error(msg);
-  }
+  try { data = JSON.parse(rawText); } catch (_) { data = {}; }
+  const parseTime = (performance.now() - parseStart) / 1000;
+  const downloadParse = Math.max(0, (respDone - headersRecv) / 1000) + parseTime;
 
   const uploadedBytes = (formData.get("file")?.size || (strategy === "A" ? file.size : 0));
-  const reqUpServerTotal = (headersTime - fetchStart) / 1000;
   const srv = data.timings || {};
-  const uploadEstimate = Math.max(0, reqUpServerTotal - Number(srv.server_recv_pre || 0) - Number(srv.server_infer || 0) - Number(srv.server_post || 0));
-  const clientPreUpload = clientReqPrepare + uploadEstimate;
+  const serverRecvPreDerived = Math.max(Number(srv.server_recv_pre || 0), Math.max(0, (headersRecv - uploadEnd) / 1000 - Number(srv.server_infer || 0) - Number(srv.server_post || 0)));
+  const clientPreUpload = clientReqPrepare + (uploadEnd - reqStart) / 1000;
   if (strategy === "A") {
-    await handleStrategyAResult(data, file, overallStart, uploadedBytes, clientPreUpload);
+    await handleStrategyAResult(data, file, overallStart, uploadedBytes, clientPreUpload, serverRecvPreDerived);
   } else {
-    await handleStrategyBResult(data, file, overallStart, mapping, uploadedBytes, clientPreUpload);
+    await handleStrategyBResult(data, file, overallStart, mapping, uploadedBytes, clientPreUpload, downloadParse, serverRecvPreDerived);
   }
   stopLoading();
 }
 
-async function handleStrategyAResult(data, file, overallStart, uploadedBytes, clientPreUpload) {
+async function handleStrategyAResult(data, file, overallStart, uploadedBytes, clientPreUpload, serverRecvPreDerived) {
   const panel = strategyPanels.A;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
   panel.downloadOriginal.href = localUrl;
@@ -206,7 +181,7 @@ async function handleStrategyAResult(data, file, overallStart, uploadedBytes, cl
   const overall = (performance.now() - overallStart) / 1000;
   setMetricCell("a", "size", formatMB(uploadedBytes));
   setMetricCell("a", "clientPreUpload", formatSeconds(clientPreUpload));
-  setMetricCell("a", "serverRecvPre", formatSeconds(srv.server_recv_pre ?? "N/A"));
+  setMetricCell("a", "serverRecvPre", formatSeconds(serverRecvPreDerived));
   setMetricCell("a", "serverInfer", formatSeconds(srv.server_infer ?? "N/A"));
   setMetricCell("a", "serverPost", formatSeconds(srv.server_post ?? "N/A"));
   setMetricCell("a", "clientRender", formatSeconds(clientRender));
@@ -214,7 +189,8 @@ async function handleStrategyAResult(data, file, overallStart, uploadedBytes, cl
   setStatus("Strategy A 完成");
 }
 
-async function handleStrategyBResult(data, file, overallStart, mapping, uploadedBytes, clientPreUpload) {
+async function handleStrategyBResult(data, file, overallStart, mapping, uploadedBytes, clientPreUpload, downloadParse, serverRecvPreDerived) {
+  const renderStart = performance.now();
   const panel = strategyPanels.B;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
   panel.downloadOriginal.href = localUrl;
@@ -227,22 +203,22 @@ async function handleStrategyBResult(data, file, overallStart, mapping, uploaded
       })
     : boxesSmall;
 
-  const { dataUrl, clientTime } = await drawBoundingBoxes(panel.originalImage, boxes, panel.canvas, { color: "#0ea5e9" });
-  const layoutStart = performance.now();
+  const { dataUrl } = await drawBoundingBoxes(panel.originalImage, boxes, panel.canvas, { color: "#0ea5e9" });
   showDetectedCanvas(panel);
   panel.detectedImage.src = dataUrl;
   panel.canvas.classList.remove("hidden");
   panel.downloadResult.href = dataUrl;
-  const layoutTime = (performance.now() - layoutStart) / 1000;
+  const renderEnd = performance.now();
+  const clientRenderTime = (renderEnd - renderStart) / 1000;
 
   const srv = data.timings || {};
   const overall = (performance.now() - overallStart) / 1000;
   setMetricCell("b", "size", formatMB(uploadedBytes));
   setMetricCell("b", "clientPreUpload", formatSeconds(clientPreUpload));
-  setMetricCell("b", "serverRecvPre", formatSeconds(srv.server_recv_pre ?? "N/A"));
+  setMetricCell("b", "serverRecvPre", formatSeconds(serverRecvPreDerived));
   setMetricCell("b", "serverInfer", formatSeconds(srv.server_infer ?? "N/A"));
   setMetricCell("b", "serverPost", formatSeconds(srv.server_post ?? "N/A"));
-  setMetricCell("b", "clientRender", formatSeconds(clientTime + layoutTime));
+  setMetricCell("b", "clientRender", formatSeconds(downloadParse + clientRenderTime));
   setMetricCell("b", "total", formatSeconds(overall));
   setStatus("Strategy B 完成");
 }

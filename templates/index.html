@@ -72,7 +72,7 @@
         </div>
 
         <div class="strategy-card" id="panel-b">
-          <div class="strategy-title">Strategy B · Server infer + Client draw</div>
+          <div class="strategy-title">Strategy B · Client preprocess + Server infer + Client draw</div>
           <div class="media-pair">
             <div class="media-slot">
               <p class="slot-label">原始</p>
@@ -115,7 +115,7 @@
       </div>
     </section>
 
-    <section class="card metrics">
+    <section class="card metrics note">
       <div class="panel-header">
         <h3>性能统计</h3>
         <p class="muted">单位：秒；“N/A” 表示该策略不涉及该阶段。</p>
@@ -174,14 +174,23 @@
           </tr>
         </tbody>
       </table>
+      <ul>
+        <li><strong>上传图片大小</strong>：A=原始图片体积；B=客户端预处理后上传的图片体积；C=N/A。</li>
+        <li><strong>客户端预处理与上传</strong>：A=本地读取+直传；B=读取+压缩/缩放/归一化后上传；C=N/A。</li>
+        <li><strong>服务器接收与预处理</strong>：A=接收原图、解码并构建模型输入；B=接收已预处理图并做轻量转换/校验；C=N/A。</li>
+        <li><strong>服务器模型推理</strong>：A/B=服务器前向计算耗时；C=N/A。</li>
+        <li><strong>服务器后处理</strong>：A=NMS+绘制+编码成图后返回；B=仅NMS与结果序列化（不绘制）；C=N/A。</li>
+        <li><strong>客户端渲染</strong>：A=加载显示服务器返回成图；B=浏览器中绘制检测框/标签并生成结果图；C=N/A。</li>
+        <li><strong>端到端耗时</strong>：A/B/C=从点击开始到结果呈现的总耗时（含各自适用阶段）。</li>
+      </ul>
     </section>
 
     <section class="card note">
       <h3>策略说明</h3>
       <ul>
-        <li>Strategy A：客户端上传，服务器完成推理与画框。</li>
-        <li>Strategy B：客户端预处理，服务器只做推理，客户端基于返回的 boxes[] 画框。</li>
-        <li>Strategy C：全流程在客户端执行，需提供 <code>static/js/yolov8n.onnx</code> 等 Web 模型文件。</li>
+        <li><strong>Strategy A</strong>：仅服务器侧执行；客户端上传原图，服务器完成预处理、推理与标注后返回成图。</li>
+        <li><strong>Strategy B</strong>：前后端协同；客户端做轻量预处理并上传，服务器仅推理返回检测框，客户端本地绘制。</li>
+        <li><strong>Strategy C</strong>：纯前端；浏览器使用 Web ONNX 在本地完成预处理、推理与绘制，无需服务器参与。</li>
       </ul>
     </section>
   </div>
