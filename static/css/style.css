@@ -57,7 +57,16 @@ input[type="file"]::-webkit-file-upload-button { color: #000; }
 .media .panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .strategy-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
 .strategy-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-.strategy-title { font-weight: 700; color: var(--text); }
+.strategy-title {
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.3;
+  min-height: calc(2 * 1.3em);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
 .media-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .media-slot { background: var(--card); border: 1px dashed var(--border); border-radius: 10px; min-height: 220px; display: grid; place-items: center; padding: 8px; position: relative; }
 .slot-label { position: absolute; top: 6px; left: 10px; color: var(--muted); font-size: 12px; margin: 0; }
