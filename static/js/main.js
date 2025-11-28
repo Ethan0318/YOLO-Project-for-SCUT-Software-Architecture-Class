@@ -13,9 +13,9 @@ const strategyPanels = {
 };
 
 const metricIds = {
-  a: { size: "metric-size-a", net: "metric-net-a", total: "metric-total-a" },
-  b: { size: "metric-size-b", net: "metric-net-b", total: "metric-total-b" },
-  c: { size: "metric-size-c", net: "metric-net-c", total: "metric-total-c" },
+  a: { size: "metric-size-a", serverInfer: "metric-infer-a", serverPost: "metric-post-a", clientRender: "metric-client-render-a", total: "metric-total-a" },
+  b: { size: "metric-size-b", serverInfer: "metric-infer-b", serverPost: "metric-post-b", clientRender: "metric-client-render-b", total: "metric-total-b" },
+  c: { size: "metric-size-c", serverInfer: "metric-infer-c", serverPost: "metric-post-c", clientRender: "metric-client-render-c", total: "metric-total-c" },
 };
 
 const COCO_CLASSES = [
@@ -177,29 +177,16 @@ async function handleServerStrategy(file, strategy) {
     throw new Error(msg);
   }
 
-  const reqUpServerTotal = (headersTime - fetchStart) / 1000;
-  const srv = data.timings || {};
-  const uploadFirstByteEst = Math.max(0,
-    reqUpServerTotal
-      - clientReqPrepare
-      - Number(srv.server_receive_preprocess || 0)
-      - Number(srv.infer || 0)
-      - Number(srv.server_postproc || 0)
-      - Number(srv.response_prepare || 0)
-  );
-  const downloadFirstByteEst = Math.max(0, firstChunkDelay);
-  const netPropagation = uploadFirstByteEst + downloadFirstByteEst;
-
-  const extra = { netPropagation, clientReqPrepare, downParseTime, clientPreTime };
+  const uploadedBytes = (formData.get("file")?.size || (strategy === "A" ? file.size : 0));
   if (strategy === "A") {
-    await handleStrategyAResult(data, file, overallStart, extra, (formData.get("file")?.size || file.size));
+    await handleStrategyAResult(data, file, overallStart, uploadedBytes);
   } else {
-    await handleStrategyBResult(data, file, overallStart, extra, mapping, (formData.get("file")?.size || 0));
+    await handleStrategyBResult(data, file, overallStart, mapping, uploadedBytes);
   }
   stopLoading();
 }
 
-async function handleStrategyAResult(data, file, overallStart, extra, uploadedBytes) {
+async function handleStrategyAResult(data, file, overallStart, uploadedBytes) {
   const panel = strategyPanels.A;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
   panel.downloadOriginal.href = localUrl;
@@ -208,18 +195,20 @@ async function handleStrategyAResult(data, file, overallStart, extra, uploadedBy
   const resultUrl = `/${data.detected}?t=${Date.now()}`;
   hideElements(panel.canvas);
   panel.detectedImage.classList.remove("hidden");
-  await waitImageLoad(panel.detectedImage, resultUrl);
+  const clientRender = await waitImageLoad(panel.detectedImage, resultUrl);
   panel.downloadResult.href = `/${data.detected}`;
 
+  const srv = data.timings || {};
   const overall = (performance.now() - overallStart) / 1000;
-  const netLatency = Number(extra.netPropagation || 0);
   setMetricCell("a", "size", formatMB(uploadedBytes));
-  setMetricCell("a", "net", formatSeconds(netLatency || "N/A"));
+  setMetricCell("a", "serverInfer", formatSeconds(srv.server_infer ?? "N/A"));
+  setMetricCell("a", "serverPost", formatSeconds(srv.server_post ?? "N/A"));
+  setMetricCell("a", "clientRender", formatSeconds(clientRender));
   setMetricCell("a", "total", formatSeconds(overall));
   setStatus("Strategy A 完成");
 }
 
-async function handleStrategyBResult(data, file, overallStart, extra, mapping, uploadedBytes) {
+async function handleStrategyBResult(data, file, overallStart, mapping, uploadedBytes) {
   const panel = strategyPanels.B;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
   panel.downloadOriginal.href = localUrl;
@@ -232,17 +221,20 @@ async function handleStrategyBResult(data, file, overallStart, extra, mapping, u
       })
     : boxesSmall;
 
-  const { dataUrl } = await drawBoundingBoxes(panel.originalImage, boxes, panel.canvas, { color: "#0ea5e9" });
-  const overall = (performance.now() - overallStart) / 1000;
-
+  const { dataUrl, clientTime } = await drawBoundingBoxes(panel.originalImage, boxes, panel.canvas, { color: "#0ea5e9" });
+  const layoutStart = performance.now();
   showDetectedCanvas(panel);
   panel.detectedImage.src = dataUrl;
   panel.canvas.classList.remove("hidden");
   panel.downloadResult.href = dataUrl;
+  const layoutTime = (performance.now() - layoutStart) / 1000;
 
-  const netLatency = Number(extra.netPropagation || 0);
+  const srv = data.timings || {};
+  const overall = (performance.now() - overallStart) / 1000;
   setMetricCell("b", "size", formatMB(uploadedBytes));
-  setMetricCell("b", "net", formatSeconds(netLatency || "N/A"));
+  setMetricCell("b", "serverInfer", formatSeconds(srv.server_infer ?? "N/A"));
+  setMetricCell("b", "serverPost", formatSeconds(srv.server_post ?? "N/A"));
+  setMetricCell("b", "clientRender", formatSeconds(clientTime + layoutTime));
   setMetricCell("b", "total", formatSeconds(overall));
   setStatus("Strategy B 完成");
 }
@@ -280,7 +272,9 @@ async function handleStrategyC(file) {
   panel.downloadResult.href = dataUrl;
 
   setMetricCell("c", "size", "N/A");
-  setMetricCell("c", "net", "N/A");
+  setMetricCell("c", "serverInfer", "N/A");
+  setMetricCell("c", "serverPost", "N/A");
+  setMetricCell("c", "clientRender", "N/A");
   setMetricCell("c", "total", formatSeconds(overall));
   stopLoading();
   setStatus("Strategy C 完成");

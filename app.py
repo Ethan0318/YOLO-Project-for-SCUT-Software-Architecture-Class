@@ -69,9 +69,7 @@ def detect():
     uploaded.save(save_path)
     save_io_time = time.time() - save_start
 
-    read_start = time.time()
     img = cv2.imread(str(save_path))
-    server_receive_preproc = time.time() - read_start
 
 
     if strategy == "C":
@@ -92,12 +90,15 @@ def detect():
         results = mdl(img, verbose=False)[0]
         infer_time = time.time() - infer_start
 
-        post_start = time.time()
+        plot_start = time.time()
         annotated = results.plot()
+        post_render_time = time.time() - plot_start
+
         detected_name = f"detected_{Path(filename).stem}.jpg"
         detected_path = RESULT_FOLDER / detected_name
+        encode_start = time.time()
         cv2.imwrite(str(detected_path), annotated)
-        postproc_time = time.time() - post_start
+        encode_time = time.time() - encode_start
 
         resp_prep_start = time.time()
         payload = {
@@ -105,10 +106,8 @@ def detect():
             "original": to_relative(save_path),
             "detected": to_relative(detected_path),
             "timings": {
-                "server_receive_preprocess": round(server_receive_preproc, 3),
-                "infer": round(infer_time, 3),
-                "server_postproc": round(postproc_time, 3),
-                "response_prepare": round(time.time() - resp_prep_start, 3),
+                "server_infer": round(infer_time, 3),
+                "server_post": round(post_render_time + encode_time + (time.time() - resp_prep_start), 3),
             },
         }
         return jsonify(payload)
@@ -118,7 +117,7 @@ def detect():
         results = mdl(img, verbose=False)[0]
         infer_time = time.time() - infer_start
 
-        post_start = time.time()
+        assemble_start = time.time()
         boxes = []
         if results.boxes is not None:
             for box in results.boxes:
@@ -133,7 +132,7 @@ def detect():
                         "conf": float(box.conf[0]),
                     }
                 )
-        postproc_time = time.time() - post_start
+        assemble_time = time.time() - assemble_start
 
         resp_prep_start = time.time()
         payload = {
@@ -141,10 +140,8 @@ def detect():
             "original": to_relative(save_path),
             "boxes": boxes,
             "timings": {
-                "server_receive_preprocess": round(server_receive_preproc, 3),
-                "infer": round(infer_time, 3),
-                "server_postproc": round(postproc_time, 3),
-                "response_prepare": round(time.time() - resp_prep_start, 3),
+                "server_infer": round(infer_time, 3),
+                "server_post": round(assemble_time + (time.time() - resp_prep_start), 3),
             },
         }
         return jsonify(payload)
