@@ -34,8 +34,9 @@
 ```
 project/
 ├─ app.py
+├─ export_onnx.py
 ├─ models/
-│   └─ yolov8n.pt
+│   └─ yolov8s.pt
 ├─ templates/
 │   └─ index.html
 ├─ static/
@@ -43,7 +44,8 @@ project/
 │   ├─ result/
 │   ├─ css/
 │   └─ js/
-│       └─ main.js
+│       ├─ main.js
+│       └─ yolov8s.onnx
 └─ README.md
 ```
 
