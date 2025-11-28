@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png"}
 UPLOAD_FOLDER = BASE_DIR / "static" / "uploads"
 RESULT_FOLDER = BASE_DIR / "static" / "result"
-MODEL_PATH = BASE_DIR / "models" / "yolov8n.pt"
+MODEL_PATH = BASE_DIR / "models" / "yolov8s.pt"
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config["UPLOAD_FOLDER"] = str(UPLOAD_FOLDER)

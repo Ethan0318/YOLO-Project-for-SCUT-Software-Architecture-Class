@@ -231,7 +231,7 @@ async function handleStrategyC(file) {
 
   if (!ortSession) {
     setStatus("加载浏览器模型...");
-    ortSession = await ort.InferenceSession.create("/static/js/yolov8n.onnx", {
+    ortSession = await ort.InferenceSession.create("/static/js/yolov8s.onnx", {
       executionProviders: ["wasm", "webgl"],
     });
   }
