@@ -65,11 +65,13 @@ def detect():
     filename = secure_filename(uploaded.filename)
     save_path = UPLOAD_FOLDER / filename
 
-    upload_start = time.time()
+    save_start = time.time()
     uploaded.save(save_path)
-    upload_time = time.time() - upload_start
+    save_io_time = time.time() - save_start
 
+    read_start = time.time()
     img = cv2.imread(str(save_path))
+    server_receive_preproc = time.time() - read_start
 
 
     if strategy == "C":
@@ -86,24 +88,37 @@ def detect():
         return jsonify({"error": str(exc)}), 500
 
     if strategy == "A":
+        infer_start = time.time()
         results = mdl(img, verbose=False)[0]
+        infer_time = time.time() - infer_start
+
+        post_start = time.time()
         annotated = results.plot()
         detected_name = f"detected_{Path(filename).stem}.jpg"
         detected_path = RESULT_FOLDER / detected_name
         cv2.imwrite(str(detected_path), annotated)
+        postproc_time = time.time() - post_start
 
-        return jsonify(
-            {
-                "strategy": "A",
-                "original": to_relative(save_path),
-                "detected": to_relative(detected_path),
-                "upload_time": round(upload_time, 3),
-            }
-        )
+        resp_prep_start = time.time()
+        payload = {
+            "strategy": "A",
+            "original": to_relative(save_path),
+            "detected": to_relative(detected_path),
+            "timings": {
+                "server_receive_preprocess": round(server_receive_preproc, 3),
+                "infer": round(infer_time, 3),
+                "server_postproc": round(postproc_time, 3),
+                "response_prepare": round(time.time() - resp_prep_start, 3),
+            },
+        }
+        return jsonify(payload)
 
     if strategy == "B":
+        infer_start = time.time()
         results = mdl(img, verbose=False)[0]
+        infer_time = time.time() - infer_start
 
+        post_start = time.time()
         boxes = []
         if results.boxes is not None:
             for box in results.boxes:
@@ -118,14 +133,21 @@ def detect():
                         "conf": float(box.conf[0]),
                     }
                 )
-        return jsonify(
-            {
-                "strategy": "B",
-                "original": to_relative(save_path),
-                "boxes": boxes,
-                "upload_time": round(upload_time, 3),
-            }
-        )
+        postproc_time = time.time() - post_start
+
+        resp_prep_start = time.time()
+        payload = {
+            "strategy": "B",
+            "original": to_relative(save_path),
+            "boxes": boxes,
+            "timings": {
+                "server_receive_preprocess": round(server_receive_preproc, 3),
+                "infer": round(infer_time, 3),
+                "server_postproc": round(postproc_time, 3),
+                "response_prepare": round(time.time() - resp_prep_start, 3),
+            },
+        }
+        return jsonify(payload)
 
     return jsonify({"error": "unknown strategy"}), 400
 

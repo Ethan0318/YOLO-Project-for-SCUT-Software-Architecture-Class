@@ -105,12 +105,16 @@ function handleError(err) {
 async function handleServerStrategy(file, strategy) {
   const overallStart = performance.now();
 
+  const reqPrepareStart = performance.now();
   const formData = new FormData();
   let mapping = null;
+  let clientPreTime = 0;
 
   if (strategy === "B") {
     const img = await loadImage(URL.createObjectURL(file));
+    const preStart = performance.now();
     const { blob, ratio, padX, padY } = await letterboxToBlob(img, IMG_SIZE);
+    clientPreTime = (performance.now() - preStart) / 1000;
     const smallFile = new File([blob], `resized_${Date.now()}.png`, { type: "image/png" });
 
     formData.append("file", smallFile);
@@ -126,31 +130,37 @@ async function handleServerStrategy(file, strategy) {
     formData.append("file", file);
     formData.append("strategy", strategy);
   }
+  const reqPrepareEnd = performance.now();
+  const clientReqPrepare = (reqPrepareEnd - reqPrepareStart) / 1000;
 
+  const fetchStart = performance.now();
   const resp = await fetch("/detect", { method: "POST", body: formData });
+  const headersTime = performance.now();
 
   let rawText = "";
-  let responseDownTTLB = 0;
+  let firstChunkDelay = 0;
+  let downParseTime = 0;
   if (resp.body && resp.body.getReader) {
     const reader = resp.body.getReader();
-    const chunks = [];
     const decoder = new TextDecoder("utf-8");
-    const downStart = performance.now();
+    const chunks = [];
+    let gotFirst = false;
     while (true) {
       const { done, value } = await reader.read();
+      if (!gotFirst && value) { firstChunkDelay = (performance.now() - headersTime) / 1000; gotFirst = true; }
       if (value) chunks.push(value);
       if (done) break;
     }
-    responseDownTTLB = (performance.now() - downStart) / 1000;
+    downParseTime = (performance.now() - headersTime) / 1000;
     const totalLen = chunks.reduce((n, c) => n + c.length, 0);
     const merged = new Uint8Array(totalLen);
     let offset = 0;
     for (const c of chunks) { merged.set(c, offset); offset += c.length; }
     rawText = decoder.decode(merged);
   } else {
-    const downStart = performance.now();
     rawText = await resp.text();
-    responseDownTTLB = (performance.now() - downStart) / 1000;
+    downParseTime = (performance.now() - headersTime) / 1000;
+    firstChunkDelay = 0;
   }
 
   let data;
@@ -167,15 +177,29 @@ async function handleServerStrategy(file, strategy) {
     throw new Error(msg);
   }
 
+  const reqUpServerTotal = (headersTime - fetchStart) / 1000;
+  const srv = data.timings || {};
+  const uploadFirstByteEst = Math.max(0,
+    reqUpServerTotal
+      - clientReqPrepare
+      - Number(srv.server_receive_preprocess || 0)
+      - Number(srv.infer || 0)
+      - Number(srv.server_postproc || 0)
+      - Number(srv.response_prepare || 0)
+  );
+  const downloadFirstByteEst = Math.max(0, firstChunkDelay);
+  const netPropagation = uploadFirstByteEst + downloadFirstByteEst;
+
+  const extra = { netPropagation, clientReqPrepare, downParseTime, clientPreTime };
   if (strategy === "A") {
-    await handleStrategyAResult(data, file, overallStart, responseDownTTLB, (formData.get("file")?.size || file.size));
+    await handleStrategyAResult(data, file, overallStart, extra, (formData.get("file")?.size || file.size));
   } else {
-    await handleStrategyBResult(data, file, overallStart, responseDownTTLB, mapping, (formData.get("file")?.size || 0));
+    await handleStrategyBResult(data, file, overallStart, extra, mapping, (formData.get("file")?.size || 0));
   }
   stopLoading();
 }
 
-async function handleStrategyAResult(data, file, overallStart, responseDownTTLB, uploadedBytes) {
+async function handleStrategyAResult(data, file, overallStart, extra, uploadedBytes) {
   const panel = strategyPanels.A;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
   panel.downloadOriginal.href = localUrl;
@@ -188,14 +212,14 @@ async function handleStrategyAResult(data, file, overallStart, responseDownTTLB,
   panel.downloadResult.href = `/${data.detected}`;
 
   const overall = (performance.now() - overallStart) / 1000;
-  const netLatency = Number(data.upload_time ?? 0) + Number(responseDownTTLB || 0);
+  const netLatency = Number(extra.netPropagation || 0);
   setMetricCell("a", "size", formatMB(uploadedBytes));
   setMetricCell("a", "net", formatSeconds(netLatency || "N/A"));
   setMetricCell("a", "total", formatSeconds(overall));
   setStatus("Strategy A 完成");
 }
 
-async function handleStrategyBResult(data, file, overallStart, responseDownTTLB, mapping, uploadedBytes) {
+async function handleStrategyBResult(data, file, overallStart, extra, mapping, uploadedBytes) {
   const panel = strategyPanels.B;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
   panel.downloadOriginal.href = localUrl;
@@ -216,7 +240,7 @@ async function handleStrategyBResult(data, file, overallStart, responseDownTTLB,
   panel.canvas.classList.remove("hidden");
   panel.downloadResult.href = dataUrl;
 
-  const netLatency = Number(data.upload_time ?? 0) + Number(responseDownTTLB || 0);
+  const netLatency = Number(extra.netPropagation || 0);
   setMetricCell("b", "size", formatMB(uploadedBytes));
   setMetricCell("b", "net", formatSeconds(netLatency || "N/A"));
   setMetricCell("b", "total", formatSeconds(overall));
