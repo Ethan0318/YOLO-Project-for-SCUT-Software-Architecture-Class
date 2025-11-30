@@ -1,3 +1,4 @@
+// DOM 元素引用
 const fileInput = document.getElementById("fileInput");
 const fileInfo = document.getElementById("fileInfo");
 const strategySelect = document.getElementById("strategySelect");
@@ -6,18 +7,21 @@ const spinner = document.getElementById("spinner");
 const progressBar = document.getElementById("progressBar");
 const statusText = document.getElementById("statusText");
 
+// 策略面板句柄
 const strategyPanels = {
   A: buildPanel("a"),
   B: buildPanel("b"),
   C: buildPanel("c"),
 };
 
+// 指标元素 ID 映射（用于更新各策略的耗时与大小展示）
 const metricIds = {
   a: { size: "metric-size-a", clientPreUpload: "metric-client-preupload-a", serverRecvPre: "metric-server-recvpre-a", serverInfer: "metric-infer-a", serverPost: "metric-post-a", clientRender: "metric-client-render-a", total: "metric-total-a" },
   b: { size: "metric-size-b", clientPreUpload: "metric-client-preupload-b", serverRecvPre: "metric-server-recvpre-b", serverInfer: "metric-infer-b", serverPost: "metric-post-b", clientRender: "metric-client-render-b", total: "metric-total-b" },
   c: { size: "metric-size-c", clientPreUpload: "metric-client-preupload-c", serverRecvPre: "metric-server-recvpre-c", serverInfer: "metric-infer-c", serverPost: "metric-post-c", clientRender: "metric-client-render-c", total: "metric-total-c" },
 };
 
+// COCO 类别列表（与模型输出类别索引对应）
 const COCO_CLASSES = [
   "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light",
   "fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow",
@@ -30,6 +34,7 @@ const COCO_CLASSES = [
   "scissors","teddy bear","hair drier","toothbrush"
 ];
 
+// 客户端（策略 C）推理与后处理参数
 const IMG_SIZE = 640;
 const CONF_THRESHOLD_C = 0.25;
 const IOU_THRESHOLD_C = 0.45;
@@ -37,9 +42,11 @@ const PRE_NMS_TOPK = 600;
 const MAX_DETS = 300;
 const CLASS_AGNOSTIC_NMS_C = false;
 
+// 进度条计时器 & 浏览器端 ONNX 会话（首次使用时加载）
 let progressInterval = null;
 let ortSession = null;
 
+// 构建指定策略面板句柄（便于统一操作 DOM）
 function buildPanel(key) {
   return {
     originalImage: document.getElementById(`original-${key}-image`),
@@ -50,6 +57,7 @@ function buildPanel(key) {
   };
 }
 
+// 文件选择与基本校验（限制图片类型、展示文件名与大小）
 fileInput.addEventListener("change", () => {
   if (!fileInput.files.length) {
     fileInfo.textContent = "未选择文件";
@@ -65,6 +73,7 @@ fileInput.addEventListener("change", () => {
   fileInfo.textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
 });
 
+// 开始处理：根据策略（A/B/C）选择服务器或客户端流程
 startBtn.addEventListener("click", () => {
   if (!fileInput.files.length) {
     alert("请先选择文件");
@@ -84,10 +93,10 @@ startBtn.addEventListener("click", () => {
   setStatus("开始处理...");
   startLoading();
 
-
-
+  // 展示原图预览
   showOriginalPreview(file, strategy);
 
+  // 分发至对应策略
   if (strategy === "C") {
     handleStrategyC(file).catch(handleError);
   } else {
@@ -96,6 +105,7 @@ startBtn.addEventListener("click", () => {
 });
 
 function handleError(err) {
+  // 统一错误处理：更新状态、提示并停止加载
   console.error(err);
   setStatus(err.message || "发生错误");
   alert(err.message || "请求失败");
@@ -103,6 +113,7 @@ function handleError(err) {
 }
 
 async function handleServerStrategy(file, strategy) {
+  // 服务器策略（A/B）：构造请求、度量时延、解析响应并更新界面
   const overallStart = performance.now();
 
   const reqPrepareStart = performance.now();
@@ -175,6 +186,7 @@ async function handleServerStrategy(file, strategy) {
 }
 
 async function handleStrategyAResult(data, file, overallStart, uploadedBytes, clientPreUpload, serverRecvPreDerived) {
+  // 策略 A：展示服务器渲染后的图片，并统计各阶段耗时
   const panel = strategyPanels.A;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
   panel.downloadOriginal.href = localUrl;
@@ -199,6 +211,7 @@ async function handleStrategyAResult(data, file, overallStart, uploadedBytes, cl
 }
 
 async function handleStrategyBResult(data, file, overallStart, mapping, uploadedBytes, clientPreUpload, downloadParse, serverRecvPreDerived) {
+  // 策略 B：服务器返回框数据，前端绘制并统计耗时
   const renderStart = performance.now();
   const panel = strategyPanels.B;
   const localUrl = panel.originalImage?.src || URL.createObjectURL(file);
@@ -233,11 +246,13 @@ async function handleStrategyBResult(data, file, overallStart, mapping, uploaded
 }
 
 async function handleStrategyC(file) {
+  // 策略 C：纯客户端推理（ONNX + 浏览器），并在前端绘制结果
   const panel = strategyPanels.C;
   const overallStart = performance.now();
   const img = await loadImage(URL.createObjectURL(file));
   const { tensor, ratio, padX, padY } = preprocessImage(img, IMG_SIZE);
 
+  // 首次运行时创建会话（WASM/WebGL 加速）
   if (!ortSession) {
     setStatus("加载浏览器模型...");
     ortSession = await ort.InferenceSession.create("/static/js/yolov8s.onnx", {
@@ -245,6 +260,7 @@ async function handleStrategyC(file) {
     });
   }
 
+  // 推理与后处理
   setStatus("浏览器推理中...");
   const inferStart = performance.now();
   const outputs = await ortSession.run({ [ortSession.inputNames[0]]: tensor });
@@ -277,6 +293,7 @@ async function handleStrategyC(file) {
 }
 
 function showOriginalPreview(file, strategy) {
+  // 加载原图预览并设置下载链接
   const url = URL.createObjectURL(file);
   const panel = strategyPanels[strategy];
   showOriginalMedia(panel, url);
@@ -284,6 +301,7 @@ function showOriginalPreview(file, strategy) {
 }
 
 function showOriginalMedia(panel, url) {
+  // 显示原图（img 标签）
   panel.originalImage.classList.remove("hidden");
   panel.originalImage.src = url;
 }
@@ -293,6 +311,7 @@ function showOriginalMedia(panel, url) {
 
 
 function showDetectedCanvas(panel) {
+  // 切换显示为 canvas（隐藏检测结果 img）
   hideElements(panel.detectedImage);
   if (panel.canvas) {
     panel.canvas.classList.remove("hidden");
@@ -300,6 +319,7 @@ function showDetectedCanvas(panel) {
 }
 
 async function drawBoundingBoxes(imageSource, boxes, targetCanvas, options = {}) {
+  // 在画布上绘制原图与检测框，返回 dataURL 与绘制耗时
   const canvas = targetCanvas;
   const ctx = canvas.getContext("2d");
 
@@ -344,6 +364,7 @@ async function drawBoundingBoxes(imageSource, boxes, targetCanvas, options = {})
 }
 
 function preprocessImage(img, size) {
+  // Letterbox 预处理：缩放并填充到正方形，生成 NCHW float32 张量
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   canvas.width = size;
@@ -371,6 +392,7 @@ function preprocessImage(img, size) {
 }
 
 async function letterboxToBlob(img, size, mime = "image/jpeg", quality = 0.8) {
+  // 按 YOLO letterbox 规则缩放填充并导出为 Blob（用于上传策略 B）
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d");
   canvas.width = size;
@@ -393,6 +415,7 @@ async function letterboxToBlob(img, size, mime = "image/jpeg", quality = 0.8) {
 }
 
 function decodeDetections(outputTensor, ratio, padX, padY, origW, origH, confThres = CONF_THRESHOLD_C, topK = PRE_NMS_TOPK) {
+  // 解码模型输出为原图坐标的检测框列表（支持含/不含 obj 分支与转置布局）
   const data = outputTensor.data;
   const dims = outputTensor.dims;
   const numClasses = COCO_CLASSES.length;
@@ -459,6 +482,7 @@ function decodeDetections(outputTensor, ratio, padX, padY, origW, origH, confThr
 }
 
 function nonMaxSuppression(boxes, iouThreshold, maxDet = MAX_DETS) {
+  // NMS：按类别（或类别无关）抑制重叠框
   if (CLASS_AGNOSTIC_NMS_C) {
     const list = boxes.slice().sort((a, b) => b.conf - a.conf);
     const picked = [];
@@ -510,6 +534,7 @@ function xywhToXyxy(x, y, w, h) {
 }
 
 function iou(a, b) {
+  // 交并比（Intersection over Union）
   const interArea = Math.max(0, Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1)) *
     Math.max(0, Math.min(a.y2, b.y2) - Math.max(a.y1, b.y1));
   const unionArea =

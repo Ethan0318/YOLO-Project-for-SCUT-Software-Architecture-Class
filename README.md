@@ -6,6 +6,10 @@
 - **Strategy B**：客户端预处理，服务器推理，客户端画框
 - **Strategy C**：纯前端（浏览器 ONNX/Web 推理与画框）
 
+## ver-5.0 更新说明
+
+- 添加了批处理测试脚本batch_web.py
+
 ## ver-4.0 更新说明
 
 - 模型改用yolov8s。
@@ -35,6 +39,7 @@
 ```
 project/
 ├─ app.py
+├─ batch_web.py
 ├─ export_onnx.py
 ├─ models/
 │   └─ yolov8s.pt
@@ -47,6 +52,12 @@ project/
 │   └─ js/
 │       ├─ main.js
 │       └─ yolov8s.onnx
+├─ batch_test/
+│   ├─ uploads/
+│   └─ result/
+│       ├─ A/
+│       ├─ B/
+│       └─ C/
 └─ README.md
 ```
 
@@ -60,10 +71,19 @@ project/
 
   ```
 - 安装依赖：
-  ```bash
-  pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-  pip install flask ultralytics opencv-python onnxruntime onnx
-  ```
+```bash
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install flask ultralytics opencv-python onnxruntime onnx
+```
+- 批量测试脚本环境（使用本机浏览器通道）：
+```bash
+pip install playwright requests
+# 使用本机浏览器，无需安装内核：在脚本中设置 channel，例如
+# pw.chromium.launch(channel="msedge", headless=False)
+# 或使用 Chrome：channel="chrome"
+# 若改用 Playwright 内置内核（可选）：
+python -m playwright install chromium
+```
   以下操作不需要在bash中操作，仅供参考模型参数怎么来：
 - 下载模型权重：
   ```bash
@@ -86,11 +106,20 @@ project/
 
 ## 运行
 
+- 启动服务端：
 ```bash
 python app.py
 ```
+- 启动后访问：`http://localhost:5000/`
 
-启动后访问：`http://localhost:5000/`
+- 批量测试（完全模拟 Web 交互，前端进行预处理与渲染）：
+```bash
+# 使用本机 Edge 浏览器通道
+python batch_web.py --input batch_test\uploads --server http://localhost:5000 --strategy A
+python batch_web.py --input batch_test\uploads --server http://localhost:5000 --strategy B
+python batch_web.py --input batch_test\uploads --server http://localhost:5000 --strategy C
+```
+- 输出目录：`batch_test\result\<A|B|C>`，包含每张图片的结果图与 `metrics.csv`；策略 C 的平均值已自动排除首次冷启动。
 
 ## 使用流程
 
